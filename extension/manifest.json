@@ -1,0 +1,83 @@
+{
+  "manifest_version": "0.3",
+  "name": "apple-music-mcp",
+  "display_name": "Apple Music",
+  "version": "1.0.0",
+  "description": "Search your music library and read its play history, through the Music app",
+  "long_description": "A local MCP server written in Swift that gives Claude access to the Music app on this Mac.\n\nMusic has no framework a separate process can use, so this server drives Music.app itself through Apple events. Music must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\nThe interesting part is what Music already records and rarely shows you: play counts, last played, skip counts, ratings, date added. Those come back as raw rows. This server computes no statistics and ranks nothing — the reading of the rows is Claude's job, where you can see it happen and argue with it.\n\nNothing here removes a track or a playlist. add_to_playlist only ever appends, and refuses smart playlists, whose contents are the output of their rules.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "author": {
+    "name": "eneko-codes",
+    "url": "https://github.com/eneko-codes"
+  },
+  "homepage": "https://github.com/eneko-codes/apple-music-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eneko-codes/apple-music-mcp"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "keywords": [
+    "music",
+    "itunes",
+    "playlists",
+    "apple events",
+    "macos"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/apple-music-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/apple-music-mcp",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "music_status",
+      "description": "Reports whether Music is running and whether this server may drive it, and says exactly what to enable and where if it may not. Also shows the scan and result limits this server is configured…"
+    },
+    {
+      "name": "now_playing",
+      "description": "Returns the current track with its full library row, how far into it playback has reached, the player state, the volume, and the playlist it is coming from."
+    },
+    {
+      "name": "music_search",
+      "description": "Finds tracks, albums, artists or playlists whose text matches a query. Returns one line each, with the id needed by track_get, playlist_get or add_to_playlist."
+    },
+    {
+      "name": "tracks_list",
+      "description": "Returns library rows with every field Music stores about a track except the lyrics: play count and last played, skip count and last skipped, rating, favourite and dislike flags, date added, genre,…"
+    },
+    {
+      "name": "playlists_list",
+      "description": "Lists every playlist with its id, track count, total time, and whether add_to_playlist can append to it."
+    },
+    {
+      "name": "playlist_get",
+      "description": "Returns a playlist's details and its tracks as raw rows, the same shape tracks_list returns."
+    },
+    {
+      "name": "track_get",
+      "description": "Returns everything Music stores about one or more tracks, including the lyrics — the one field tracks_list leaves out, because reading it costs a round trip per track."
+    },
+    {
+      "name": "create_playlist",
+      "description": "Creates a new, empty playlist in Music."
+    },
+    {
+      "name": "add_to_playlist",
+      "description": "Appends tracks to an existing playlist. It only ever adds: nothing already in the playlist is removed, replaced or reordered, and a track already there gains a second entry rather than being…"
+    },
+    {
+      "name": "music_control",
+      "description": "CHANGES WHAT IS CURRENTLY PLAYING on this Mac: starts or pauses playback, skips to the next or previous track, or sets the system music volume. The effect is immediate and audible to whoever is at…"
+    }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin"
+    ]
+  }
+}

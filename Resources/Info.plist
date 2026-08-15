@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- CFBundleName is the label macOS shows in System Settings > Privacy & Security >
+	     Automation. Keep it identical to the binary name so the toggle is recognisable. -->
+	<key>CFBundleName</key>
+	<string>apple-music-mcp</string>
+	<key>CFBundleIdentifier</key>
+	<string>codes.eneko.apple-music-mcp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- This server reads and controls Music through Apple events, so the grant it needs
+	     is Automation, not the Media & Apple Music one. NSAppleMusicUsageDescription
+	     covers MediaPlayer/MusicKit access to the media library and is not what
+	     ScriptingBridge asks for. Key name verified against the tccd binary on macOS
+	     26.5. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Lets Claude read your Music library and control playback through this local MCP server.</string>
+</dict>
+</plist>
