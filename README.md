@@ -33,7 +33,7 @@ Not affiliated with or endorsed by Apple Inc.
 | `playlist_get` | read | One playlist's details and its tracks, as the same raw rows `tracks_list` returns. |
 | `track_get` | read | Everything Music stores about one or more tracks, including lyrics — the one field `tracks_list` omits. |
 | `create_playlist` | write | Creates a new, empty playlist. Refuses a name already in use. |
-| `add_to_playlist` | write | Appends tracks to an existing playlist. Refuses smart, Genius, folder and library playlists. |
+| `add_to_playlist` | write | Appends tracks to an existing playlist, optionally skipping ids it already holds. Refuses smart, Genius, folder and library playlists. |
 | `music_control` | write | Starts, pauses, skips or sets the volume — **audible immediately**, on this Mac. Annotated as a write although it destroys nothing, because of that. |
 
 There is no destructive tool in this list, and there cannot be one by design: nothing
@@ -71,6 +71,14 @@ being deduplicated. It also refuses smart, Genius, folder and library playlists 
 contents are Music's own rules or Music's own aggregate, and a track appended by hand
 would either vanish on the next evaluation or corrupt what the rules were meant to
 express.
+
+**`skip_duplicates` is the one guard against that append being permanent.** Off by
+default, because Music itself allows the same track twice and a caller may mean it. Pass
+`skip_duplicates=true` and ids the playlist already holds are reported back instead of
+appended, within the call as well as against what is already there. It exists for the
+case that actually happens: a client times out on an add the server had already
+completed, the call is retried, and the playlist quietly doubles. Since nothing here
+removes a track, undoing that means doing it by hand in Music.
 
 **There is no delete tool, for a track or for a playlist, and none is planned.** A track
 removed from the library can take the underlying file with it — that is not a risk this
@@ -195,7 +203,8 @@ can tell which one answered.
 ## Known limits
 
 - **No delete tool, deliberately.** A playlist created by mistake, or a duplicate
-  `add_to_playlist` entry, has to be cleaned up in Music itself.
+  `add_to_playlist` entry, has to be cleaned up in Music itself. `skip_duplicates`
+  prevents the common case; it cannot repair one that already happened.
 - **Smart, Genius, folder and library playlists refuse writes.** Their contents are the
   output of Music's own rules or Music's own aggregation; `add_to_playlist` and
   `create_playlist` cannot touch them, and neither can any workaround built on top of

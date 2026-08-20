@@ -35,6 +35,11 @@ public enum MusicMCPServer {
         Neither will delete or overwrite an existing playlist, and no tool here removes a \
         track from the library or from disk.
 
+        add_to_playlist appends whatever it is given, duplicates included, unless \
+        skip_duplicates=true is passed. Pass it when retrying an add that may already have \
+        gone through: a call that timed out on the client often succeeded on the server, \
+        and nothing here can take the extra entries out again.
+
         This server exposes the library's read surface in full. What may be used at any \
         moment is decided by the permission switches in the client, not by this code.
         """

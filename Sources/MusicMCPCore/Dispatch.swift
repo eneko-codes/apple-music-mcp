@@ -241,6 +241,7 @@ public struct MusicTools: Sendable {
         let playlistID = try arguments.requiredString("playlist_id")
         let trackIDs = try arguments.stringArray("track_ids")
         guard !trackIDs.isEmpty else { throw ToolError.noTracksGiven }
+        let skipDuplicates = arguments.bool("skip_duplicates")
 
         guard
             let playlist = try await store.playlists().first(where: {
@@ -254,7 +255,10 @@ public struct MusicTools: Sendable {
         }
 
         return format.added(
-            try await store.addTracks(persistentIDs: trackIDs, toPlaylist: playlistID))
+            try await store.addTracks(
+                persistentIDs: trackIDs, toPlaylist: playlistID,
+                skipDuplicates: skipDuplicates),
+            skipDuplicatesRequested: skipDuplicates)
     }
 
     private func control(_ arguments: Arguments) async throws -> String {

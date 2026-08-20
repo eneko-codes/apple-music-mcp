@@ -461,6 +461,7 @@ static const FourCharCode MusicSpecialKindLibrary = 'kSpL';
 + (nullable NSDictionary<NSString *, id> *)addTracksWithPersistentIDs:
                                               (NSArray<NSString *> *)persistentIDs
                                            toPlaylistPersistentID:(NSString *)playlistPersistentID
+                                                   skipDuplicates:(BOOL)skipDuplicates
                                                              error:(NSError **)error {
     SBApplication<MusicApplication> *application = [self applicationWithError:error];
     if (!application) return nil;
@@ -492,10 +493,27 @@ static const FourCharCode MusicSpecialKindLibrary = 'kSpL';
         return nil;
     }
 
+    // Read only when asked. -arrayByApplyingSelector: fetches the one property for every
+    // track in a single Apple event, so the cost is one round trip rather than one per
+    // track — but it is still a cost the default path should not pay.
+    NSMutableSet<NSString *> *alreadyPresent = nil;
+    if (skipDuplicates) {
+        NSArray<NSString *> *existing =
+            [playlist.tracks arrayByApplyingSelector:@selector(persistentID)];
+        alreadyPresent = [NSMutableSet setWithArray:existing ?: @[]];
+    }
+
     SBElementArray<id<MusicTrack>> *library = [self libraryTracksOf:application];
     NSInteger added = 0;
     NSMutableArray<NSString *> *missing = [NSMutableArray array];
+    NSMutableArray<NSString *> *duplicates = [NSMutableArray array];
     for (NSString *identifier in persistentIDs) {
+        // Checked before the library lookup: a duplicate is skipped whether or not the
+        // predicate would have resolved it, and this way it costs nothing to find out.
+        if (alreadyPresent && [alreadyPresent containsObject:identifier]) {
+            [duplicates addObject:identifier];
+            continue;
+        }
         NSArray *matching = [library
             filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"persistentID == %@",
                                                                          identifier]];
@@ -507,11 +525,19 @@ static const FourCharCode MusicSpecialKindLibrary = 'kSpL';
         // `duplicate` appends a copy; it cannot remove or reorder what is already there.
         if ([track duplicateTo:(SBObject *)playlist]) {
             added += 1;
+            // Also guards the batch against itself. The same id twice in one call is a
+            // duplicate the second time round, which is the shape a retried call takes.
+            [alreadyPresent addObject:identifier];
         } else {
             [missing addObject:identifier];
         }
     }
-    return @{@"added": @(added), @"missing": missing, @"playlistName": playlistRow[@"name"]};
+    return @{
+        @"added": @(added),
+        @"missing": missing,
+        @"duplicates": duplicates,
+        @"playlistName": playlistRow[@"name"]
+    };
 }
 
 + (nullable NSDictionary<NSString *, id> *)runCommand:(NSString *)command

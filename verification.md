@@ -70,10 +70,14 @@ Worth doing once so you trust what the number means: it is every device, not thi
 | 5.5 | `add_to_playlist` into a **smart** playlist | Refused, explaining that its contents are the output of its rules. |
 | 5.6 | `add_to_playlist` into the library itself, or a folder | Refused. |
 | 5.7 | `add_to_playlist` with one real id and one nonsense id | Partial success reported honestly: what was added, what was not. |
-| 5.8 | Look for a delete tool in `tools/list` | There is none. |
+| 5.8 | `add_to_playlist` the same track again, `skip_duplicates=true` | Nothing appended; the id is reported as already present. Track count unchanged in Music. |
+| 5.9 | `add_to_playlist` one id **twice in one call**, `skip_duplicates=true` | Added once. This is the retried-timeout shape. |
+| 5.10 | `add_to_playlist` a genuinely new id, `skip_duplicates=true` | Appended, and the answer says none were already there — not silence. |
+| 5.11 | Look for a delete tool in `tools/list` | There is none. |
 
-Step 5.4 is the append guarantee. Step 5.8 is why you delete `ZZTest` and `ZZTest 2` by hand
-afterwards.
+Step 5.4 is the append guarantee. Steps 5.8–5.10 are the duplicate guard: 5.10 matters
+because "checked and found none" must not read the same as "never looked". Step 5.11 is why
+you delete `ZZTest` and `ZZTest 2` by hand afterwards.
 
 ## 6 — Playback, with the volume down
 

@@ -61,8 +61,13 @@ public protocol MusicStore: Sendable {
 
     /// Appends to a playlist. Append only — nothing already in the playlist is removed,
     /// reordered or replaced.
-    func addTracks(persistentIDs: [String], toPlaylist playlistPersistentID: String) async throws
-        -> AddOutcome
+    ///
+    /// `skipDuplicates` leaves out ids the playlist already holds. Off by default at the
+    /// tool boundary: Music itself permits the same track twice and a caller may mean it,
+    /// so the guard is something to ask for rather than something to be given.
+    func addTracks(
+        persistentIDs: [String], toPlaylist playlistPersistentID: String, skipDuplicates: Bool
+    ) async throws -> AddOutcome
 
     /// Changes playback and returns the resulting state, so the answer describes what the
     /// owner will actually hear rather than what was requested.

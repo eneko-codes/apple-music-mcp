@@ -188,11 +188,16 @@ public struct AddOutcome: Sendable, Equatable {
     public let playlistName: String
     public let added: Int
     public let missing: [String]
+    /// Ids left out because the playlist already held them. Only ever populated when the
+    /// caller asked for that; without `skipDuplicates` nothing is skipped, so an empty
+    /// array here means "none were skipped", never "none were duplicates".
+    public let duplicates: [String]
 
-    public init(playlistName: String, added: Int, missing: [String]) {
+    public init(playlistName: String, added: Int, missing: [String], duplicates: [String]) {
         self.playlistName = playlistName
         self.added = added
         self.missing = missing
+        self.duplicates = duplicates
     }
 }
 

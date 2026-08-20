@@ -309,8 +309,13 @@ public enum ToolCatalog {
         title: "Add tracks to a playlist",
         description: """
             Appends tracks to an existing playlist. It only ever adds: nothing already in \
-            the playlist is removed, replaced or reordered, and a track already there \
-            gains a second entry rather than being deduplicated.
+            the playlist is removed, replaced or reordered, and by default a track already \
+            there gains a second entry rather than being deduplicated.
+
+            Pass skip_duplicates=true to leave out ids the playlist already holds. Set it \
+            when retrying a call that may have already succeeded — a timed-out add often \
+            went through, and repeating it is how a playlist ends up with every track \
+            twice. Nothing here can undo that afterwards.
 
             REFUSES smart, Genius, folder and library playlists — Music maintains those \
             itself. Check 'accepts tracks' in playlists_list first. An id the library does \
@@ -320,6 +325,11 @@ public enum ToolCatalog {
             properties: [
                 "playlist_id": string("Playlist id returned by playlists_list."),
                 "track_ids": stringArray("Track ids to append, in the order they should go in."),
+                "skip_duplicates": boolean(
+                    "true to leave out ids the playlist already holds, reporting them "
+                        + "instead of appending them again. Also applies within one call, so "
+                        + "the same id twice is added once. Defaults to false, which appends "
+                        + "everything given."),
             ],
             required: ["playlist_id", "track_ids"]),
         annotations: .init(

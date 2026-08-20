@@ -269,15 +269,16 @@ public struct ScriptingBridgeMusicStore: MusicStore {
         }
     }
 
-    public func addTracks(persistentIDs: [String], toPlaylist playlistPersistentID: String)
-        async throws -> AddOutcome
-    {
+    public func addTracks(
+        persistentIDs: [String], toPlaylist playlistPersistentID: String, skipDuplicates: Bool
+    ) async throws -> AddOutcome {
         try guardAvailability()
 
         let raw: [String: Any]
         do {
             raw = try MusicBridge.addTracks(
-                withPersistentIDs: persistentIDs, toPlaylistPersistentID: playlistPersistentID)
+                withPersistentIDs: persistentIDs, toPlaylistPersistentID: playlistPersistentID,
+                skipDuplicates: skipDuplicates)
         } catch let failure as NSError
             where failure.domain == MusicBridgeErrorDomain
                 && failure.code == MusicBridgeError.playlistNotFound.rawValue
@@ -296,7 +297,8 @@ public struct ScriptingBridgeMusicStore: MusicStore {
         return AddOutcome(
             playlistName: raw["playlistName"] as? String ?? "",
             added: raw["added"] as? Int ?? 0,
-            missing: raw["missing"] as? [String] ?? [])
+            missing: raw["missing"] as? [String] ?? [],
+            duplicates: raw["duplicates"] as? [String] ?? [])
     }
 
     public func control(_ command: PlaybackCommand, volume: Int?) async throws -> PlayerStatus {
