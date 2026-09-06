@@ -151,13 +151,15 @@ struct MusicToolsTests {
         #expect(!text.contains("Gaua"))
     }
 
+    /// Pins "no aggregation, ever": the raw `playedCount` for each fixture must reach the
+    /// response unchanged, not folded into a most-played ranking or a total.
     @Test("tracks_list returns raw rows including the play counts")
     func tracksListReturnsRawRows() async {
         let (text, isError) = await call(ToolCatalog.tracksName, store: stocked())
         #expect(!isError)
         #expect(text.contains("Marea Baja"))
-        #expect(text.contains("Hondartza"))
-        #expect(text.contains("Gaua"))
+        #expect(text.contains("played=12"))
+        #expect(text.contains("played=0"))
     }
 
     @Test("A search is bounded by the fixed scan ceiling")
@@ -175,14 +177,23 @@ struct MusicToolsTests {
         #expect(text.contains("Top Rated"))
     }
 
-    @Test("track_get returns a full record for a known id")
+    /// Covers bulk resolution (several ids in one call) and lyrics truncation together: a
+    /// caller who reads a lyric sheet must be told when it was cut short, or a truncated
+    /// sheet reads as the whole song.
+    @Test("track_get resolves several ids and truncates lyrics past the configured limit")
     func trackGetReturnsDetail() async {
         let store = stocked()
-        store.lyricsValue = "invented lyrics for a fixture track"
+        store.lyricsValue = String(repeating: "la la la ", count: 40)
+        var configuration = Configuration()
+        configuration.lyricsLimit = Configuration.lyricsLimitRange.lowerBound
         let (text, isError) = await call(
-            ToolCatalog.trackGetName, ["ids": .array([.string("T1")])], store: store)
+            ToolCatalog.trackGetName,
+            ["ids": .array([.string("T1"), .string("T3")])],
+            store: store, configuration: configuration)
         #expect(!isError)
         #expect(text.contains("Marea Baja"))
+        #expect(text.contains("Gaua"))
+        #expect(text.contains("truncated"))
     }
 
     /// A track can be removed from the library between two calls, so an unresolved id is
@@ -192,16 +203,6 @@ struct MusicToolsTests {
         let (text, _) = await call(
             ToolCatalog.trackGetName, ["ids": .array([.string("NOPE")])], store: stocked())
         #expect(text.contains("NOPE"))
-    }
-
-    @Test("track_get accepts several ids in one call")
-    func trackGetAcceptsBulkIDs() async {
-        let (text, isError) = await call(
-            ToolCatalog.trackGetName,
-            ["ids": .array([.string("T1"), .string("T3")])], store: stocked())
-        #expect(!isError)
-        #expect(text.contains("Marea Baja"))
-        #expect(text.contains("Gaua"))
     }
 
     @Test("A missing required argument is named in the error")
@@ -226,6 +227,18 @@ struct MusicToolsTests {
             ToolCatalog.createPlaylistName, ["name": .string("ZZTest Fixture")], store: store)
         #expect(!isError)
         #expect(store.createdPlaylists == ["ZZTest Fixture"])
+    }
+
+    /// Overwriting a name in use would silently replace whatever the owner already built
+    /// under it. `create_playlist` must refuse instead of ever standing in for an edit.
+    @Test("create_playlist refuses a name already taken")
+    func createPlaylistRefusesExistingName() async {
+        let store = stocked()
+        let (text, isError) = await call(
+            ToolCatalog.createPlaylistName, ["name": .string("Driving")], store: store)
+        #expect(isError)
+        #expect(store.createdPlaylists.isEmpty)
+        #expect(text.contains("Driving"))
     }
 
     /// A smart playlist's contents are the output of its rules. A track appended by hand
