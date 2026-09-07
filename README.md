@@ -225,8 +225,8 @@ no permissions and never touch the real library, playlists or playback — see
 server's tests may never call `music_control`, launch Music, or read the library store
 directly.
 
-Manual verification against a real library, including the one section that makes
-audible noise, is the owner's job by hand; `verification.md` is the script for it.
+Manual verification against a real library, including the checks that make audible
+noise, is the owner's job by hand.
 
 ## Licence
 
