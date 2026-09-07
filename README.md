@@ -8,7 +8,7 @@ A local MCP server, written in Swift, exposing the macOS **Music** app to Claude
 Apple events (`ScriptingBridge`). It ships as a Claude extension.
 
 Music has no framework a separate process can use for the local library, so this server
-drives Music.app itself, the same way `apple-mail-mcp` drives Mail. Music must already be
+drives Music.app itself through Apple events. Music must already be
 running — this server never launches it, because Music can start playing audio out loud
 the moment it opens.
 
@@ -39,6 +39,25 @@ Not affiliated with or endorsed by Apple Inc.
 There is no destructive tool in this list, and there cannot be one by design: nothing
 here removes a track or a playlist, from the library or from disk, and no delete tool
 may be added — see below.
+
+## Frameworks and APIs
+
+Music exposes no framework an external process can use for the local library, so everything
+here is an Apple event.
+
+| Used | For | Reference |
+|---|---|---|
+| ScriptingBridge — `SBApplication`, `SBElementArray` | Every read and write | [ScriptingBridge](https://developer.apple.com/documentation/scriptingbridge) |
+| `AEDeterminePermissionToAutomateTarget` | Checking Automation consent without sending an event | [Apple Events](https://developer.apple.com/documentation/coreservices/apple_events) |
+| AppKit — `NSWorkspace`, `NSRunningApplication` | Whether the app is installed, and whether it is running | [AppKit](https://developer.apple.com/documentation/appkit) |
+| `NSAppleEventsUsageDescription` | The consent string macOS shows | [Information Property List](https://developer.apple.com/documentation/bundleresources/information-property-list/nsappleeventsusagedescription) |
+
+Music's dictionary (`sdef /System/Applications/Music.app`) is large. Unused commands include
+`convert`, `export`, `download`, `refresh`, `subscribe`, `print`, `quit`, `open location`,
+and the `EQ preset`, `AirPlay device`, `visual` and window classes — this server reads the
+library, creates a playlist, adds to one, and drives transport, and nothing else. MusicKit
+and `NSAppleMusicUsageDescription` are a different route to a different store, and are not
+used at all.
 
 ## The rules worth knowing before you use it
 
@@ -76,7 +95,8 @@ express.
 removed from the library can take the underlying file with it — that is not a risk this
 server takes on your behalf.
 
-**Lyrics are truncated at a configurable limit** (8,000 characters by default) and only
+**Lyrics are truncated at 8,000 characters** — `--lyrics-limit` changes that, but the
+extension passes no arguments, so it is the default unless you run the binary yourself. Only
 `track_get` pays the cost of fetching them; every other read leaves lyrics out entirely,
 because reading them costs a round trip per track.
 
@@ -122,7 +142,7 @@ System Settings → Privacy & Security → Automation → apple-music-mcp → Mu
 The binary is **its own privacy subject**: Claude Desktop launches MCP servers through
 `Contents/Helpers/disclaimer`, which calls `responsibility_spawnattrs_setdisclaim`.
 Sending Apple events needs `NSAppleEventsUsageDescription`, embedded at link time. Note
-that this is `Automation` permission, the same gate `apple-mail-mcp` uses — not the
+that this is `Automation` permission — not the
 separate `NSAppleMusicUsageDescription`/MusicKit grant, which this server never asks
 for, because it never touches the media library through that framework.
 
@@ -162,8 +182,8 @@ MCPB_HARDENED=1 MCPB_SIGN_IDENTITY="Developer ID Application: …" ./scripts/pac
 ```
 
 That adds the hardened runtime and a secure timestamp, which notarisation requires. Note
-that, unlike `apple-mail-mcp`, this repository has no `Resources/entitlements.plist` yet
-— `pack.sh` only applies one if the file exists. The hardened runtime blocks Apple
+that this repository has no `Resources/entitlements.plist` yet — `pack.sh` only applies one
+if the file exists. The hardened runtime blocks Apple
 events outright without the `com.apple.security.automation.apple-events` entitlement, so
 add that file before distributing a hardened build.
 
