@@ -86,14 +86,21 @@ typedef NS_ERROR_ENUM(MusicBridgeErrorDomain, MusicBridgeError){
 + (nullable NSDictionary<NSString *, id> *)createPlaylistNamed:(NSString *)name
                                                           error:(NSError **)error;
 
-/// Appends tracks to a playlist and returns `{added, missing: [persistentID]}`.
+/// Appends tracks to a playlist and returns
+/// `{added, missing: [persistentID], duplicates: [persistentID]}`.
 ///
 /// Append only: `duplicate` copies a library track into the playlist and touches nothing
 /// that is already in it. Refuses smart, Genius, folder and subscription playlists, which
 /// Music maintains itself.
+///
+/// `skipDuplicates` leaves out ids the playlist already holds and reports them under
+/// `duplicates` instead. Off by default, because Music itself allows the same track
+/// twice and a caller may well mean it. Reading the playlist's ids to answer the
+/// question costs one Apple event, so the default path is left paying nothing for it.
 + (nullable NSDictionary<NSString *, id> *)addTracksWithPersistentIDs:
                                                (NSArray<NSString *> *)persistentIDs
                                             toPlaylistPersistentID:(NSString *)playlistPersistentID
+                                                    skipDuplicates:(BOOL)skipDuplicates
                                                               error:(NSError **)error;
 
 /// Runs one transport command and returns the resulting player state.

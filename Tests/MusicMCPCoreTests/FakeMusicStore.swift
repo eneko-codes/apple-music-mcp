@@ -24,7 +24,11 @@ final class FakeMusicStore: MusicStore, @unchecked Sendable {
     private(set) var lastFilter: TrackFilter?
     private(set) var lastScanCeiling: Int?
     private(set) var createdPlaylists: [String] = []
-    private(set) var appended: [(ids: [String], playlist: String)] = []
+    private(set) var appended: [(ids: [String], playlist: String, skipDuplicates: Bool)] = []
+
+    /// What each playlist already holds, keyed by playlist persistent id. Modelled here
+    /// only because skip_duplicates is the one tool behaviour that depends on it.
+    var playlistTracks: [String: [String]] = [:]
     private(set) var commands: [(command: PlaybackCommand, volume: Int?)] = []
 
     func availability() -> MusicAvailability { availabilityValue }
@@ -86,18 +90,39 @@ final class FakeMusicStore: MusicStore, @unchecked Sendable {
         return created
     }
 
-    func addTracks(persistentIDs: [String], toPlaylist playlistPersistentID: String) async throws
-        -> AddOutcome
-    {
+    func addTracks(
+        persistentIDs: [String], toPlaylist playlistPersistentID: String, skipDuplicates: Bool
+    ) async throws -> AddOutcome {
         if let failure { throw failure }
         let playlist = playlistsValue.first { $0.persistentID == playlistPersistentID }
-        appended.append((ids: persistentIDs, playlist: playlistPersistentID))
+        appended.append(
+            (ids: persistentIDs, playlist: playlistPersistentID, skipDuplicates: skipDuplicates))
+
         let known = Set(tracksValue.map(\.persistentID))
-        let missing = persistentIDs.filter { !known.contains($0) }
+        var present = Set(playlistTracks[playlistPersistentID] ?? [])
+        var missing: [String] = []
+        var duplicates: [String] = []
+        var added = 0
+
+        for identifier in persistentIDs {
+            if skipDuplicates, present.contains(identifier) {
+                duplicates.append(identifier)
+                continue
+            }
+            guard known.contains(identifier) else {
+                missing.append(identifier)
+                continue
+            }
+            playlistTracks[playlistPersistentID, default: []].append(identifier)
+            // Mirrors the bridge: an id appended in this same call counts as present for
+            // the ids that follow it.
+            if skipDuplicates { present.insert(identifier) }
+            added += 1
+        }
+
         return AddOutcome(
             playlistName: playlist?.name ?? playlistPersistentID,
-            added: persistentIDs.count - missing.count,
-            missing: missing)
+            added: added, missing: missing, duplicates: duplicates)
     }
 
     func control(_ command: PlaybackCommand, volume: Int?) async throws -> PlayerStatus {

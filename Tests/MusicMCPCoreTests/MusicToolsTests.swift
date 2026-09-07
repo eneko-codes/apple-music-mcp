@@ -264,6 +264,76 @@ struct MusicToolsTests {
         #expect(!isError)
         #expect(store.appended.count == 1)
         #expect(store.appended.first?.ids == ["T1", "T2"])
+        // The guard is opt-in, so an unadorned call must not quietly acquire it.
+        #expect(store.appended.first?.skipDuplicates == false)
+    }
+
+    @Test("add_to_playlist appends a second copy when skip_duplicates is not asked for")
+    func addToPlaylistDuplicatesByDefault() async {
+        let store = stocked()
+        store.playlistTracks["PL1"] = ["T1"]
+        let (text, isError) = await call(
+            ToolCatalog.addToPlaylistName,
+            ["playlist_id": .string("PL1"), "track_ids": .array([.string("T1")])],
+            store: store)
+        #expect(!isError)
+        #expect(store.playlistTracks["PL1"] == ["T1", "T1"])
+        // Silence about duplicates, because none was ever checked for.
+        #expect(!text.contains("already in the playlist"))
+    }
+
+    @Test("skip_duplicates leaves out what the playlist already holds")
+    func skipDuplicatesLeavesOutWhatIsThere() async {
+        let store = stocked()
+        store.playlistTracks["PL1"] = ["T1"]
+        let (text, isError) = await call(
+            ToolCatalog.addToPlaylistName,
+            [
+                "playlist_id": .string("PL1"),
+                "track_ids": .array([.string("T1"), .string("T2")]),
+                "skip_duplicates": .bool(true),
+            ],
+            store: store)
+        #expect(!isError)
+        #expect(store.appended.first?.skipDuplicates == true)
+        #expect(store.playlistTracks["PL1"] == ["T1", "T2"])
+        #expect(text.contains("Added 1 track"))
+        #expect(text.contains("already in the playlist"))
+        #expect(text.contains("T1"))
+    }
+
+    /// The failure that prompted the flag: a client timeout on a call the server had
+    /// already completed, retried as one batch.
+    @Test("skip_duplicates guards a call against its own repeated ids")
+    func skipDuplicatesGuardsWithinOneCall() async {
+        let store = stocked()
+        let (_, isError) = await call(
+            ToolCatalog.addToPlaylistName,
+            [
+                "playlist_id": .string("PL1"),
+                "track_ids": .array([.string("T1"), .string("T1"), .string("T1")]),
+                "skip_duplicates": .bool(true),
+            ],
+            store: store)
+        #expect(!isError)
+        #expect(store.playlistTracks["PL1"] == ["T1"])
+    }
+
+    @Test("skip_duplicates says so when nothing was already there")
+    func skipDuplicatesReportsACleanRun() async {
+        let store = stocked()
+        let (text, isError) = await call(
+            ToolCatalog.addToPlaylistName,
+            [
+                "playlist_id": .string("PL1"),
+                "track_ids": .array([.string("T1")]),
+                "skip_duplicates": .bool(true),
+            ],
+            store: store)
+        #expect(!isError)
+        // Distinguishes "checked, found none" from "never looked", which an empty
+        // duplicates list on its own cannot.
+        #expect(text.contains("None of the ids given were already in the playlist"))
     }
 
     @Test("music_control reaches the store with the command it was given")

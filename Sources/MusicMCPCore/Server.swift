@@ -4,7 +4,7 @@ import MCP
 public enum MusicMCPServer {
 
     public static let name = "apple-music-mcp"
-    public static let version = "1.0.0"
+    public static let version = "1.1.0"
 
     /// Returned from `initialize`. It carries what per-tool descriptions cannot state
     /// once: that Music itself does the work, what the play counts actually mean, and
@@ -34,6 +34,11 @@ public enum MusicMCPServer {
         create_playlist and add_to_playlist are the only tools that modify the library. \
         Neither will delete or overwrite an existing playlist, and no tool here removes a \
         track from the library or from disk.
+
+        add_to_playlist appends whatever it is given, duplicates included, unless \
+        skip_duplicates=true is passed. Pass it when retrying an add that may already have \
+        gone through: a call that timed out on the client often succeeded on the server, \
+        and nothing here can take the extra entries out again.
 
         This server exposes the library's read surface in full. What may be used at any \
         moment is decided by the permission switches in the client, not by this code.

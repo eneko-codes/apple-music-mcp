@@ -370,10 +370,28 @@ public struct Format: Sendable {
         """
     }
 
-    public func added(_ outcome: AddOutcome) -> String {
+    /// `skipDuplicatesRequested` is passed separately rather than inferred from a
+    /// non-empty `duplicates`, because the two silences mean different things: with the
+    /// guard off nothing was ever checked, and reporting that as "no duplicates" would be
+    /// a claim this server never verified.
+    public func added(_ outcome: AddOutcome, skipDuplicatesRequested: Bool) -> String {
         var text =
             "Added \(outcome.added) track\(outcome.added == 1 ? "" : "s") "
             + "to \"\(outcome.playlistName)\". Nothing already in it was changed."
+        if skipDuplicatesRequested {
+            if outcome.duplicates.isEmpty {
+                text += " None of the ids given were already in the playlist."
+            } else {
+                text += """
+
+
+                    \(outcome.duplicates.count) id\(outcome.duplicates.count == 1 ? "" : "s") \
+                    \(outcome.duplicates.count == 1 ? "was" : "were") already in the playlist \
+                    and \(outcome.duplicates.count == 1 ? "was" : "were") not added again:
+                      \(outcome.duplicates.joined(separator: "\n  "))
+                    """
+            }
+        }
         if !outcome.missing.isEmpty {
             text += """
 

@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "apple-music-mcp",
   "display_name": "Apple Music",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Search your music library and read its play history, through the Music app",
-  "long_description": "A local MCP server written in Swift that gives Claude access to the Music app on this Mac.\n\nMusic has no framework a separate process can use, so this server drives Music.app itself through Apple events. Music must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\nThe interesting part is what Music already records and rarely shows you: play counts, last played, skip counts, ratings, date added. Those come back as raw rows. This server computes no statistics and ranks nothing — the reading of the rows is Claude's job, where you can see it happen and argue with it.\n\nNothing here removes a track or a playlist. add_to_playlist only ever appends, and refuses smart playlists, whose contents are the output of their rules.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "long_description": "A local MCP server written in Swift that gives Claude access to the Music app on this Mac.\n\nMusic has no framework a separate process can use, so this server drives Music.app itself through Apple events. Music must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\nThe interesting part is what Music already records and rarely shows you: play counts, last played, skip counts, ratings, date added. Those come back as raw rows. This server computes no statistics and ranks nothing — the reading of the rows is Claude's job, where you can see it happen and argue with it.\n\nNothing here removes a track or a playlist. add_to_playlist only ever appends, and refuses smart playlists, whose contents are the output of their rules. Because there is no way back, it takes a skip_duplicates option for the case that actually bites: retrying an add that had already gone through.\n\nNot affiliated with or endorsed by Apple Inc.",
   "author": {
     "name": "eneko-codes",
     "url": "https://github.com/eneko-codes"
@@ -67,7 +67,7 @@
     },
     {
       "name": "add_to_playlist",
-      "description": "Appends tracks to an existing playlist. It only ever adds: nothing already in the playlist is removed, replaced or reordered, and a track already there gains a second entry rather than being…"
+      "description": "Appends tracks to an existing playlist. It only ever adds: nothing already in the playlist is removed, replaced or reordered. Pass skip_duplicates=true to leave out ids the playlist already holds — worth setting when retrying an add that may already have succeeded."
     },
     {
       "name": "music_control",
