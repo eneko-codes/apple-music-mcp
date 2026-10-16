@@ -116,7 +116,7 @@ because reading them costs a round trip per track.
 MCPB_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/pack.sh
 ```
 
-That builds a universal (arm64 + x86_64) release binary, re-signs it, checks the
+That builds an arm64 (Apple silicon only) release binary, re-signs it, checks the
 embedded `Info.plist` survived both linking and signing, prints the designated
 requirement, and writes `dist/apple-music-mcp.mcpb`. It fails loudly rather than
 shipping a bundle that would silently refuse to work.
