@@ -248,7 +248,7 @@ swift build
 swift test
 ```
 
-21 tests, all against an in-memory fake (`FakeMusicStore`) with Music closed. They need
+The tests run entirely against an in-memory fake (`FakeMusicStore`) with Music closed. They need
 no permissions and never touch the real library, playlists or playback — see
 `CLAUDE.md`, whose first section is the rule that makes that non-negotiable: this
 server's tests may never call `music_control`, launch Music, or read the library store
