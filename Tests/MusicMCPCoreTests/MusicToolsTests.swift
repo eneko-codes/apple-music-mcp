@@ -1,5 +1,4 @@
 import Foundation
-import MCP
 import Testing
 
 @testable import MusicMCPCore
@@ -17,10 +16,10 @@ struct MusicToolsTests {
     ) async -> (text: String, isError: Bool) {
         let tools = MusicTools(store: store, configuration: configuration)
         let result = await tools.handle(.init(name: name, arguments: arguments))
-        guard case .text(let text, _, _) = result.content.first else {
+        guard case .text(let text) = result.content.first else {
             return ("(no text content)", true)
         }
-        return (text, result.isError ?? false)
+        return (text, result.isError)
     }
 
     private func stocked() -> FakeMusicStore {
@@ -106,6 +105,21 @@ struct MusicToolsTests {
             $0["name"] as? String
         }
         #expect(Set(listed) == Set(ToolCatalog.all().map(\.name)))
+    }
+
+    /// The server is built from the system's own frameworks and nothing else. A dependency
+    /// is a decision for the owner, so adding one has to break this test first.
+    @Test("The package declares no third-party dependency")
+    func noDependencies() throws {
+        let package = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // MusicMCPCoreTests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // repo root
+                .appending(path: "Package.swift"),
+            encoding: .utf8)
+        #expect(!package.contains(".package("), "Package.swift declares a dependency")
+        #expect(!package.contains(".product("))
     }
 
     // MARK: Availability
