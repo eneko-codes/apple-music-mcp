@@ -53,20 +53,31 @@ typedef NS_ERROR_ENUM(MusicBridgeErrorDomain, MusicBridgeError){
 /// a summary row or absent when nothing is loaded.
 + (nullable NSDictionary<NSString *, id> *)playerStateWithError:(NSError **)error;
 
-/// Walks tracks and returns `{scanned, tracks: [row]}`, one row per track with every
-/// summary property but the lyrics.
+/// Walks tracks and returns `{scanned, tracks: [row], stop, candidates}`, one row per
+/// track read, with every summary property but the lyrics.
 ///
 /// `predicate` is pushed into Music as a `whose` clause rather than applied here:
 /// filtering in Music is dramatically faster than shipping the whole library across the
 /// Apple event boundary. It is built in Swift from typed values — there is no string
-/// splicing on either side. `maxScan` bounds the walk and `scanned` reports how far it
-/// actually got, which is what lets the caller say a result was truncated.
+/// splicing on either side.
+///
+/// The tracks the predicate leaves are the candidates, in Music's own order. The first
+/// `skip` are passed over without reading a property, which costs no Apple event, so a
+/// caller can page at the source. At most `maxScan` are then read, and none once
+/// `deadline` has passed. `scanned` reports how many were read and `stop` why the walk
+/// ended: `end` when every candidate was passed over or read, `limit` when `maxScan` were
+/// read and at least one more follows, `deadline` when the time ran out first. That is
+/// what lets the caller say what it did not look at. `candidates` is how many there are
+/// in all: counted by the walk itself when it reached the end, and otherwise Music's own
+/// count, asked once the walk has stopped.
 ///
 /// A nil `playlistPersistentID` walks the whole library.
 + (nullable NSDictionary<NSString *, id> *)scanTracksInPlaylist:
                                                (nullable NSString *)playlistPersistentID
                                                        predicate:(nullable NSPredicate *)predicate
+                                                            skip:(NSInteger)skip
                                                          maxScan:(NSInteger)maxScan
+                                                        deadline:(nullable NSDate *)deadline
                                                            error:(NSError **)error;
 
 /// One track with its lyrics, or nil with `MusicBridgeErrorTrackNotFound` if the library

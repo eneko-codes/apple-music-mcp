@@ -130,7 +130,7 @@ public struct ScriptingBridgeMusicStore: MusicStore {
     /// `CONTAINS` in a `whose` clause is both unreadable and the kind of construct that
     /// fails by returning nothing rather than by erroring. It is applied in Swift instead,
     /// after the scan — which is why a text search can only find what the scan reached,
-    /// and why the ceiling being hit is reported.
+    /// and why a scan that stopped early is reported.
     ///
     /// Built with `NSPredicate(format:argumentArray:)`, so caller strings are typed
     /// arguments and never spliced into a string.
@@ -193,14 +193,15 @@ public struct ScriptingBridgeMusicStore: MusicStore {
         do { return Self.status(try MusicBridge.playerState()) } catch { throw storeFailure(error) }
     }
 
-    public func tracks(matching filter: TrackFilter, scanCeiling: Int) async throws -> TrackPage {
+    public func tracks(matching filter: TrackFilter, walk: TrackWalk) async throws -> TrackPage {
         try guardAvailability()
 
         let page: [String: Any]
         do {
             page = try MusicBridge.scanTracks(
                 inPlaylist: filter.playlistPersistentID,
-                predicate: Self.predicate(for: filter), maxScan: scanCeiling)
+                predicate: Self.predicate(for: filter), skip: walk.skip, maxScan: walk.read,
+                deadline: walk.deadline)
         } catch let failure as NSError
             where failure.domain == MusicBridgeErrorDomain
                 && failure.code == MusicBridgeError.playlistNotFound.rawValue
@@ -210,18 +211,27 @@ public struct ScriptingBridgeMusicStore: MusicStore {
             throw storeFailure(error)
         }
 
-        let scanned = page["scanned"] as? Int ?? 0
         var rows = (page["tracks"] as? [[String: Any]] ?? []).map(Self.row)
+        let scanned = page["scanned"] as? Int ?? rows.count
         if let text = filter.text, !text.isEmpty {
             rows = rows.filter { Self.matches($0, text: text) }
         }
-        // The ceiling being reached is reported rather than inferred from the count: a
-        // scan that stopped exactly at the ceiling and a library exactly that size look
-        // identical from the outside, and only one of them is missing tracks.
-        return TrackPage(results: rows, total: rows.count, hitScanLimit: scanned >= scanCeiling)
+        return TrackPage(
+            rows: rows, scanned: scanned, stop: Self.stop(page["stop"] as? String),
+            candidates: page["candidates"] as? Int)
     }
 
-    public func track(persistentID: String, lyricsLimit: Int) async throws -> TrackDetail? {
+    /// The bridge names why a walk ended. A name this code does not know is read as the
+    /// read limit, which claims the least: that more may follow.
+    static func stop(_ name: String?) -> TrackPage.Stop {
+        switch name {
+        case "end": return .end
+        case "deadline": return .deadline
+        default: return .readLimit
+        }
+    }
+
+    public func track(persistentID: String) async throws -> TrackDetail? {
         try guardAvailability()
 
         let raw: [String: Any]
@@ -238,12 +248,7 @@ public struct ScriptingBridgeMusicStore: MusicStore {
             throw storeFailure(error)
         }
 
-        let lyrics = raw["lyrics"] as? String ?? ""
-        let truncated = lyrics.count > lyricsLimit
-        return TrackDetail(
-            row: Self.row(raw),
-            lyrics: truncated ? String(lyrics.prefix(lyricsLimit)) : lyrics,
-            lyricsTruncated: truncated)
+        return TrackDetail(row: Self.row(raw), lyrics: raw["lyrics"] as? String ?? "")
     }
 
     public func playlists() async throws -> [PlaylistInfo] {

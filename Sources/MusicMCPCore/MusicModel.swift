@@ -97,30 +97,79 @@ public struct TrackRow: Sendable, Equatable {
 /// A row plus the lyrics, which only `track_get` pays for.
 public struct TrackDetail: Sendable, Equatable {
     public let row: TrackRow
+    /// Whole, however long: the tool layer decides how much of it one result holds and
+    /// says how to read the rest.
     public let lyrics: String
-    /// True when `lyrics` was cut to the configured limit, so a reader is never left to
-    /// assume a truncated lyric sheet is the whole song.
-    public let lyricsTruncated: Bool
 
-    public init(row: TrackRow, lyrics: String, lyricsTruncated: Bool) {
+    public init(row: TrackRow, lyrics: String) {
         self.row = row
         self.lyrics = lyrics
-        self.lyricsTruncated = lyricsTruncated
+    }
+}
+
+/// Which stretch of the candidates one query walks.
+///
+/// The candidates are the tracks left by the filters Music evaluates itself, in the order
+/// Music lists them. Passing over one costs nothing, because none of its properties is
+/// read; reading one costs a round trip per property. So a listing pages at the source
+/// (`skip` is its offset, `read` its limit) and never hauls rows it will not show.
+public struct TrackWalk: Sendable, Equatable {
+    /// Candidates to pass over before any is read.
+    public var skip: Int
+    /// The most candidates to read in full.
+    public var read: Int
+    /// When to stop reading although `read` was not reached. `nil` reads on regardless.
+    public var deadline: Date?
+
+    public init(skip: Int = 0, read: Int, deadline: Date? = nil) {
+        self.skip = skip
+        self.read = read
+        self.deadline = deadline
     }
 }
 
 public struct TrackPage: Sendable, Equatable {
-    public let results: [TrackRow]
-    public let total: Int
-    /// True when the walk stopped at the scan ceiling rather than exhausting the source.
-    /// Distinct from `total`: it means "there may be tracks I never looked at", which
-    /// silence would misrepresent.
-    public let hitScanLimit: Bool
 
-    public init(results: [TrackRow], total: Int, hitScanLimit: Bool = false) {
-        self.results = results
-        self.total = total
-        self.hitScanLimit = hitScanLimit
+    /// Why the walk ended. Reported, never inferred from a count: a walk that read exactly
+    /// `read` candidates and a source exactly that long look the same from the outside, and
+    /// only one of them has tracks nobody looked at.
+    public enum Stop: Sendable, Equatable {
+        /// Every candidate was passed over or read.
+        case end
+        /// `read` candidates were read and at least one more follows.
+        case readLimit
+        /// The deadline passed with candidates still unread.
+        case deadline
+    }
+
+    /// The rows that were read and matched the text filter, in the order Music lists them.
+    public let rows: [TrackRow]
+    /// How many candidates were read in full, whether or not their text matched.
+    public let scanned: Int
+    public let stop: Stop
+    /// How many candidates there are in all. Exact when the walk reached the end, because
+    /// the walk counted them. Otherwise it is Music's own count, asked after the walk
+    /// stopped, and `nil` when Music gave none: a figure to state, never one to rely on
+    /// for deciding whether more exist. `stop` decides that.
+    public let candidates: Int?
+
+    public init(rows: [TrackRow], scanned: Int, stop: Stop, candidates: Int?) {
+        self.rows = rows
+        self.scanned = scanned
+        self.stop = stop
+        self.candidates = candidates
+    }
+
+    /// How many candidates exist, as a result showing `shown` rows after `offset` may
+    /// state it: the walk's own count at the end, and Music's count only when it agrees
+    /// that rows remain after the ones shown.
+    public func total(after offset: Int, shown: Int) -> Int? {
+        switch stop {
+        case .end: return candidates ?? offset + shown
+        case .readLimit, .deadline:
+            guard let candidates, candidates > offset + shown else { return nil }
+            return candidates
+        }
     }
 }
 

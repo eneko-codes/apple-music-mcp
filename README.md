@@ -25,15 +25,15 @@ Not affiliated with or endorsed by Apple Inc.
 
 | Tool | Kind | What it does |
 |---|---|---|
-| `music_status` | read | Reports whether Music is running and automation is permitted, and the scan ceiling, default row count and lyrics limit in force. Reads no tracks and never launches Music. |
-| `now_playing` | read | The current track's full library row, playback position, player state, volume and source playlist. |
-| `music_search` | read | Finds tracks, albums, artists or playlists by text. Albums and artists are a group-by over matching tracks, not objects in Music's own dictionary. |
-| `tracks_list` | read | Raw library rows: play count, last played, skip count, last skipped, rating, favourite/disliked flags, date added, and more. No aggregation — the reading is yours to do. |
-| `playlists_list` | read | Every playlist, with id, track count, total time, and whether `add_to_playlist` can append to it. |
-| `playlist_get` | read | One playlist's details and its tracks, as the same raw rows `tracks_list` returns. |
-| `track_get` | read | Everything Music stores about one or more tracks, including lyrics — the one field `tracks_list` omits. |
+| `music_status` | read | Reports whether Music is running and automation is permitted, and the bounds in force: how far a search scans, how many rows a page holds, how long a call may take. Reads no tracks and never launches Music. |
+| `now_playing` | read | The current track's library row, playback position, player state, volume and source playlist. |
+| `music_search` | read | Finds tracks, albums, artists or playlists by text, a page at a time. It scans at most 2,000 tracks and says so when it stopped there; `genre`, `year_from`, `year_to` and `playlist_id` narrow the scan. Albums and artists are a group-by over matching tracks, not objects in Music's own dictionary. |
+| `tracks_list` | read | Raw library rows, a page at a time: play count, last played, skip count, last skipped, rating, favourite/disliked flags, date added, and more. `limit` and `offset` reach every row. No aggregation — the reading is yours to do. |
+| `playlists_list` | read | The playlists, a page at a time, with id, track count, total time, and whether `add_to_playlist` can append to it. |
+| `playlist_get` | read | One playlist's details and a page of its tracks, as the same raw rows `tracks_list` returns. |
+| `track_get` | read | Everything Music stores about one track, lyrics included, a window at a time when it is long; or up to 20 tracks at once with their lyrics shortened. |
 | `create_playlist` | write | Creates a new, empty playlist. Refuses a name already in use. |
-| `add_to_playlist` | write | Appends tracks to an existing playlist, optionally skipping ids it already holds. Refuses smart, Genius, folder and library playlists. |
+| `add_to_playlist` | write | Appends up to 100 tracks to an existing playlist, optionally skipping ids it already holds. Refuses smart, Genius, folder and library playlists. |
 | `music_control` | write | Starts, pauses, skips or sets the volume — **audible immediately**, on this Mac. Annotated as a write although it destroys nothing, because of that. |
 
 There is no destructive tool in this list, and there cannot be one by design: nothing
@@ -73,9 +73,34 @@ number read as "played on this Mac".
 played, skip count, rating, favourite flag, date added — Music's own fields, unfiltered.
 There is deliberately no statistics tool: ranking a library, finding what is most
 played, computing a skip rate — that reasoning belongs where it can be seen and argued
-with, not baked into a compiled heuristic. A query that hits the scan ceiling
-(`Configuration.scanCeiling`, fixed at 2,000 tracks per call) says so rather than
-presenting a partial answer as a complete one.
+with, not baked into a compiled heuristic.
+
+**Every result is bounded, and says what it left out.** Tracks, playlists and search
+results come one page at a time, in an order the result states. When a result does not
+hold everything, its first lines say so and give the exact arguments that return the
+rest: `limit` and `offset` for rows, `character_offset` and `max_characters` for one
+track's record. `tracks_list` and `playlist_get` page at the source: `offset` tracks are
+passed over without being read and only the rows of the page are, so every track can be
+reached however large the library. A number outside its range (`limit`, `offset`, a year, a play
+count, a rating, a window) is moved to the nearest allowed value and the first lines say
+which one was used; a volume too is moved and reported. A wrong type, a date that does not exist, a range that ends before it
+starts and an argument the tool does not take are refused too, with the form expected:
+nothing is dropped silently. `from_date` and `to_date` bound the date a track was added,
+both inclusive. The sizes are constants
+in `ToolCatalog.swift`, which the schemas, descriptions and instructions quote. No result
+is longer than `ToolStandard.longestResult`: each tool keeps to that itself, and the
+protocol layer cuts, with a notice, any result that did not.
+
+**`music_search` can only find what it scanned.** The text of a query is matched in this
+server, not by Music, so a search reads tracks to match them and stops after
+`ToolCatalog.scanCeiling` (2,000). When it stopped there its first lines say so, and
+`genre`, `year_from`, `year_to` and `playlist_id` narrow what Music hands over before the
+scan. It never presents a partial scan as a complete one.
+
+**Every call is bounded in time.** Reading tracks stops after 40 seconds and the result
+holds what was read, saying that it is partial. A call that has not answered after 55
+seconds is abandoned with an error. Abandoning a call does not stop Music: a write may
+still have gone through, and the error says how to check.
 
 **`music_control` is audible and live, not undoable.** Calling it again does not restore
 the previous state — `previous` moves to the previous track in the playlist, it does not
@@ -103,10 +128,13 @@ removes a track, undoing that means doing it by hand in Music.
 removed from the library can take the underlying file with it — that is not a risk this
 server takes on your behalf.
 
-**Lyrics are truncated at 8,000 characters** — `--lyrics-limit` changes that, but the
-extension passes no arguments, so it is the default unless you run the binary yourself. Only
-`track_get` pays the cost of fetching them; every other read leaves lyrics out entirely,
-because reading them costs a round trip per track.
+**Lyrics and comments are never cut silently.** `track_get` with one id returns the whole
+record, comment and lyrics included, 10,000 characters to a window; a longer one says how
+long it is and the `character_offset` of the rest. With several ids (20 at most) each
+record's lyrics are shortened to 500 characters and the first lines say so. A row shows
+the first 80 characters of a comment and names `track_get` when it cut one. Only
+`track_get` pays the cost of fetching lyrics; every other read leaves them out entirely,
+because reading them costs a round trip per track. The server takes no settings.
 
 ## Install
 
@@ -229,10 +257,18 @@ can tell which one answered.
   output of Music's own rules or Music's own aggregation; `add_to_playlist` and
   `create_playlist` cannot touch them, and neither can any workaround built on top of
   these tools.
-- **One query walks at most 2,000 tracks.** Music does the reading, one round trip per
-  property per track across the Apple event boundary, so an unbounded pass over a large
-  library is slow. The ceiling is fixed, not user-configurable, and a truncated result
-  says so.
+- **A search scans at most 2,000 tracks.** Music does the reading, one round trip per
+  property per track across the Apple event boundary, and a query is matched here, so
+  `music_search` has to read tracks to search them. The ceiling is fixed, a search that
+  stopped at it says so, and its narrowing arguments are the way past it. A track's name
+  cannot be searched for in a part of the library no narrowing reaches.
+- **A total short of the last page is Music's own count.** `tracks_list` reads just the
+  page and asks Music how many tracks the filters leave. If Music gives no count, or one
+  that contradicts the rows read, the result says that more exist, not how many.
+- **Each page is a new reading.** A track added or removed between two calls shifts the
+  pages that follow.
+- **One call takes at most 20 ids in `track_get` and 100 in `add_to_playlist`.** More are
+  refused whole, before anything is read or added: split them across calls.
 - **No aggregation or ranking.** `tracks_list` and `playlist_get` return raw rows; there
   is no "most played" or "never played" tool, and there will not be one.
 - **Play counts are shared across every device synced to the library**, not scoped to

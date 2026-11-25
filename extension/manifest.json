@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "apple-music-mcp",
   "display_name": "Apple Music",
-  "version": "1.1.1",
+  "version": "2.0.0",
   "description": "Search your music library and read its play history, through the Music app",
-  "long_description": "A local MCP server written in Swift that gives Claude access to the Music app on this Mac.\n\nMusic has no framework a separate process can use, so this server drives Music.app itself through Apple events. Music must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\nThe interesting part is what Music already records and rarely shows you: play counts, last played, skip counts, ratings, date added. Those come back as raw rows. This server computes no statistics and ranks nothing — the reading of the rows is Claude's job, where you can see it happen and argue with it.\n\nNothing here removes a track or a playlist. add_to_playlist only ever appends, and refuses smart playlists, whose contents are the output of their rules. Because there is no way back, it takes a skip_duplicates option for the case that actually bites: retrying an add that had already gone through.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "long_description": "A local MCP server written in Swift that gives Claude access to the Music app on this Mac.\n\nMusic has no framework a separate process can use, so this server drives Music.app itself through Apple events. Music must be running, and the grant appears under System Settings → Privacy & Security → Automation.\n\nThe interesting part is what Music already records and rarely shows you: play counts, last played, skip counts, ratings, date added. Those come back as raw rows. This server computes no statistics and ranks nothing — the reading of the rows is Claude's job, where you can see it happen and argue with it.\n\nEvery result is bounded and says what it left out. Tracks, playlists and search results come one page at a time; when a result does not hold everything, its first lines say so and give the exact arguments that return the rest (limit and offset, or character_offset and max_characters for one track's record and lyrics). tracks_list and playlist_get read only the rows of the page, so every track can be reached however large the library. A search matches its query in this server, so it reads tracks to search them: it stops after 2000 tracks and says so, and genre, year_from, year_to and playlist_id narrow what it scans. A number outside its range is moved to the nearest allowed value, and the result says which one was used; a volume too is moved and reported. tracks_list takes from_date and to_date for the date a track was added.\n\nEvery call is bounded in time: reading stops after 40 seconds and the result says that it is partial, and a call that has not answered after 55 seconds is abandoned with an error that says so.\n\nNothing here removes a track or a playlist. add_to_playlist only ever appends, and refuses smart playlists, whose contents are the output of their rules. Because there is no way back, it takes a skip_duplicates option for the case that actually bites: retrying an add that had already gone through.\n\nNot affiliated with or endorsed by Apple Inc.",
   "author": {
     "name": "eneko-codes",
     "url": "https://github.com/eneko-codes"
@@ -35,43 +35,43 @@
   "tools": [
     {
       "name": "music_status",
-      "description": "Reports whether Music is running and whether this server may drive it, and says exactly what to enable and where if it may not. Also shows the scan and result limits this server is configured…"
+      "description": "Reports whether Music is running and whether this server may drive it, and says exactly what to enable and where if it may not. Also shows the bounds in force: how far a search scans, how many rows a page holds and how long a call may take."
     },
     {
       "name": "now_playing",
-      "description": "Returns the current track with its full library row, how far into it playback has reached, the player state, the volume, and the playlist it is coming from."
+      "description": "Returns the current track with its library row, how far into it playback has reached, the player state, the volume, and the playlist it is coming from."
     },
     {
       "name": "music_search",
-      "description": "Finds tracks, albums, artists or playlists whose text matches a query. Returns one line each, with the id needed by track_get, playlist_get or add_to_playlist."
+      "description": "Finds tracks, albums, artists or playlists whose text matches a query, one page at a time; limit and offset reach the rest. It scans at most 2000 tracks and says so when it stopped there; genre, year_from, year_to and playlist_id narrow the scan."
     },
     {
       "name": "tracks_list",
-      "description": "Returns library rows with every field Music stores about a track except the lyrics: play count and last played, skip count and last skipped, rating, favourite and dislike flags, date added, genre,…"
+      "description": "Returns library rows one page at a time, with the fields Music stores about a track: play count and last played, skip count, rating, favourite flag, date added and more. limit and offset reach every row, however large the library; from_date and to_date bound the date added."
     },
     {
       "name": "playlists_list",
-      "description": "Lists every playlist with its id, track count, total time, and whether add_to_playlist can append to it."
+      "description": "Lists the playlists one page at a time, each with its id, track count, total time, and whether add_to_playlist can append to it; limit and offset reach the rest."
     },
     {
       "name": "playlist_get",
-      "description": "Returns a playlist's details and its tracks as raw rows, the same shape tracks_list returns."
+      "description": "Returns a playlist's details and one page of its tracks as raw rows, the same shape tracks_list returns; limit and offset reach every track."
     },
     {
       "name": "track_get",
-      "description": "Returns everything Music stores about one or more tracks, including the lyrics — the one field tracks_list leaves out, because reading it costs a round trip per track."
+      "description": "Given one id, returns everything Music stores about that track, comment and lyrics included, one window at a time when it is long. Given several (up to 20), returns each record with its lyrics shortened to 500 characters."
     },
     {
       "name": "create_playlist",
-      "description": "Creates a new, empty playlist in Music."
+      "description": "Creates a new, empty playlist in Music. Refuses a name already in use."
     },
     {
       "name": "add_to_playlist",
-      "description": "Appends tracks to an existing playlist. It only ever adds: nothing already in the playlist is removed, replaced or reordered. Pass skip_duplicates=true to leave out ids the playlist already holds — worth setting when retrying an add that may already have succeeded."
+      "description": "Appends up to 100 tracks to an existing playlist. It only ever adds: nothing already in the playlist is removed, replaced or reordered. Pass skip_duplicates=true to leave out ids the playlist already holds — worth setting when retrying an add that may already have succeeded."
     },
     {
       "name": "music_control",
-      "description": "CHANGES WHAT IS CURRENTLY PLAYING on this Mac: starts or pauses playback, skips to the next or previous track, or sets the system music volume. The effect is immediate and audible to whoever is at…"
+      "description": "CHANGES WHAT IS CURRENTLY PLAYING on this Mac: starts or pauses playback, skips to the next or previous track, or sets the system music volume. The effect is immediate and audible to whoever is at the machine."
     }
   ],
   "compatibility": {
