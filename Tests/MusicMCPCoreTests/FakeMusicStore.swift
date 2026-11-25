@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 
 @testable import MusicMCPCore
@@ -11,7 +12,9 @@ final class FakeMusicStore: MusicStore, @unchecked Sendable {
 
     var availabilityValue: MusicAvailability = .ready
     var tracksValue: [TrackRow] = []
+    /// The lyrics of every track that has none of its own in `lyricsByID`.
     var lyricsValue: String = ""
+    var lyricsByID: [String: String] = [:]
     var playlistsValue: [PlaylistInfo] = []
     var status = PlayerStatus(
         state: .stopped, volume: 50, position: 0, playlistName: "", track: nil)
@@ -20,9 +23,23 @@ final class FakeMusicStore: MusicStore, @unchecked Sendable {
     /// Apple event failure.
     var failure: (any Error)?
 
+    /// Set to make a walk stop for lack of time after reading this many tracks, as the
+    /// bridge does when its deadline passes. The fake never looks at a clock.
+    var deadlineAfter: Int?
+
+    /// What Music answers when a walk that stopped early asks how many candidates there
+    /// are: the true count by default, nothing when `false`, and `miscount` when that is
+    /// set, as a count taken while the library was changing would be.
+    var answersCount = true
+    var miscount: Int?
+
+    /// Set to make the store wait and hold its thread, as an Apple event does that Music
+    /// never answers.
+    var block: DispatchSemaphore?
+
     // Recorded so a test can prove a tool passed through what it claimed to.
     private(set) var lastFilter: TrackFilter?
-    private(set) var lastScanCeiling: Int?
+    private(set) var lastWalk: TrackWalk?
     private(set) var createdPlaylists: [String] = []
     private(set) var appended: [(ids: [String], playlist: String, skipDuplicates: Bool)] = []
 
@@ -31,49 +48,69 @@ final class FakeMusicStore: MusicStore, @unchecked Sendable {
     var playlistTracks: [String: [String]] = [:]
     private(set) var commands: [(command: PlaybackCommand, volume: Int?)] = []
 
-    func availability() -> MusicAvailability { availabilityValue }
+    func availability() -> MusicAvailability {
+        block?.wait()
+        return availabilityValue
+    }
 
     func playerStatus() async throws -> PlayerStatus {
         if let failure { throw failure }
         return status
     }
 
-    func tracks(matching filter: TrackFilter, scanCeiling: Int) async throws -> TrackPage {
+    func tracks(matching filter: TrackFilter, walk: TrackWalk) async throws -> TrackPage {
         if let failure { throw failure }
         lastFilter = filter
-        lastScanCeiling = scanCeiling
+        lastWalk = walk
 
-        // Only the text predicate is modelled, because it is the one the tool layer can
-        // get wrong. The rest is the store's job and is verified by hand against Music.
-        var matched = tracksValue
+        // The candidates: what the filters Music evaluates itself leave. Only the ones the
+        // tool layer can get wrong are modelled; the rest is the store's job and is
+        // verified by hand against Music. A playlist whose tracks a test did not list
+        // holds every track.
+        var candidates = tracksValue
+        if let id = filter.playlistPersistentID, let members = playlistTracks[id] {
+            let byID = Dictionary(
+                tracksValue.map { ($0.persistentID, $0) }, uniquingKeysWith: { first, _ in first })
+            candidates = members.compactMap { byID[$0] }
+        }
+        if let genre = filter.genre?.lowercased(), !genre.isEmpty {
+            candidates = candidates.filter { $0.genre.lowercased() == genre }
+        }
+        if let from = filter.yearFrom { candidates = candidates.filter { $0.year >= from } }
+        if let to = filter.yearTo { candidates = candidates.filter { $0.year <= to } }
+        if let favorited = filter.favorited {
+            candidates = candidates.filter { $0.favorited == favorited }
+        }
+
+        // As the bridge walks them: skip, then read up to the limit or the deadline.
+        var read = Array(candidates.dropFirst(walk.skip).prefix(walk.read))
+        var stop: TrackPage.Stop = walk.skip + walk.read < candidates.count ? .readLimit : .end
+        if let deadlineAfter, read.count > deadlineAfter {
+            read = Array(read.prefix(deadlineAfter))
+            stop = .deadline
+        }
+
+        // The text is matched after the read, as in the real store: a query can only find
+        // what the walk reached.
+        var rows = read
         if let text = filter.text?.lowercased(), !text.isEmpty {
-            matched = matched.filter {
+            rows = rows.filter {
                 [$0.name, $0.artist, $0.albumArtist, $0.album, $0.composer]
                     .contains { $0.lowercased().contains(text) }
             }
         }
-        if let genre = filter.genre?.lowercased(), !genre.isEmpty {
-            matched = matched.filter { $0.genre.lowercased() == genre }
-        }
-        if let favorited = filter.favorited {
-            matched = matched.filter { $0.favorited == favorited }
-        }
-
-        let capped = Array(matched.prefix(scanCeiling))
-        return TrackPage(
-            results: capped, total: matched.count, hitScanLimit: matched.count > scanCeiling)
+        // A walk that reached the end counted the candidates itself; one that did not has
+        // only what Music says.
+        let counted = stop == .end ? candidates.count : (answersCount ? miscount ?? candidates.count : nil)
+        return TrackPage(rows: rows, scanned: read.count, stop: stop, candidates: counted)
     }
 
-    func track(persistentID: String, lyricsLimit: Int) async throws -> TrackDetail? {
+    func track(persistentID: String) async throws -> TrackDetail? {
         if let failure { throw failure }
         guard let row = tracksValue.first(where: { $0.persistentID == persistentID }) else {
             return nil
         }
-        let truncated = lyricsValue.count > lyricsLimit
-        return TrackDetail(
-            row: row,
-            lyrics: truncated ? String(lyricsValue.prefix(lyricsLimit)) : lyricsValue,
-            lyricsTruncated: truncated)
+        return TrackDetail(row: row, lyrics: lyricsByID[persistentID] ?? lyricsValue)
     }
 
     func playlists() async throws -> [PlaylistInfo] {
@@ -136,6 +173,25 @@ final class FakeMusicStore: MusicStore, @unchecked Sendable {
             track: status.track)
         return status
     }
+}
+
+// MARK: - Driving the tools
+
+struct ToolResult {
+    var text: String
+    var isError: Bool
+}
+
+func call(
+    _ tool: String, _ arguments: [String: Value] = [:], store: FakeMusicStore = FakeMusicStore(),
+    timeout: Duration = MusicTools.defaultTimeout
+) async -> ToolResult {
+    // A fixed calendar, so a date in a result reads the same on every machine.
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+    let tools = MusicTools(store: store, calendar: calendar, timeout: timeout)
+    let result = await tools.handle(ToolCall(name: tool, arguments: arguments))
+    return ToolResult(text: result.text, isError: result.isError)
 }
 
 // MARK: - Fixtures

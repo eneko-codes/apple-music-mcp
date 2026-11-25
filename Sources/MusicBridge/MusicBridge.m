@@ -321,7 +321,9 @@ static const FourCharCode MusicSpecialKindLibrary = 'kSpL';
 + (nullable NSDictionary<NSString *, id> *)scanTracksInPlaylist:
                                               (nullable NSString *)playlistPersistentID
                                                       predicate:(nullable NSPredicate *)predicate
+                                                           skip:(NSInteger)skip
                                                         maxScan:(NSInteger)maxScan
+                                                       deadline:(nullable NSDate *)deadline
                                                           error:(NSError **)error {
     SBApplication<MusicApplication> *application = [self applicationWithError:error];
     if (!application) return nil;
@@ -349,10 +351,28 @@ static const FourCharCode MusicSpecialKindLibrary = 'kSpL';
     NSArray *candidates =
         predicate ? [source filteredArrayUsingPredicate:predicate] : ([source get] ?: @[]);
 
+    // `passed` counts every candidate the loop has gone by, skipped or read, so that a
+    // walk that reaches the end knows exactly how many candidates there are.
+    NSInteger passed = 0;
     NSInteger scanned = 0;
+    NSString *stop = @"end";
     NSMutableArray<NSDictionary<NSString *, id> *> *tracks = [NSMutableArray array];
     for (id<MusicTrack> track in candidates) {
-        if (scanned >= maxScan) break;
+        // Skipping reads no property of the track, so it sends no Apple event.
+        if (passed < skip) {
+            passed += 1;
+            continue;
+        }
+        // Checked with a candidate in hand, so "limit" always means one more exists.
+        if (scanned >= maxScan) {
+            stop = @"limit";
+            break;
+        }
+        if (deadline && deadline.timeIntervalSinceNow <= 0) {
+            stop = @"deadline";
+            break;
+        }
+        passed += 1;
         scanned += 1;
         // NOTE: one round trip per property per track. If a large library makes this too
         // slow, SBElementArray's -arrayByApplyingSelector: fetches one property for every
@@ -361,7 +381,11 @@ static const FourCharCode MusicSpecialKindLibrary = 'kSpL';
         // until measurement says otherwise.
         [tracks addObject:[self rowForTrack:track]];
     }
-    return @{@"scanned": @(scanned), @"tracks": tracks};
+    // A walk that reached the end has counted the candidates itself. One that stopped
+    // early reads the count of the candidate list, which costs no Apple event of its own, so that the caller can say how
+    // much exists and not only that more does.
+    NSInteger total = [stop isEqualToString:@"end"] ? passed : (NSInteger)candidates.count;
+    return @{@"scanned": @(scanned), @"tracks": tracks, @"stop": stop, @"candidates": @(total)};
 }
 
 + (nullable NSDictionary<NSString *, id> *)trackWithPersistentID:(NSString *)persistentID

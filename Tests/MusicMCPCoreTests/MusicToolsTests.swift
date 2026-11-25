@@ -11,15 +11,10 @@ struct MusicToolsTests {
 
     private func call(
         _ name: String, _ arguments: [String: Value] = [:],
-        store: FakeMusicStore = FakeMusicStore(),
-        configuration: Configuration = Configuration()
+        store: FakeMusicStore = FakeMusicStore()
     ) async -> (text: String, isError: Bool) {
-        let tools = MusicTools(store: store, configuration: configuration)
-        let result = await tools.handle(.init(name: name, arguments: arguments))
-        guard case .text(let text) = result.content.first else {
-            return ("(no text content)", true)
-        }
-        return (text, result.isError)
+        let result = await MusicMCPCoreTests.call(name, arguments, store: store)
+        return (result.text, result.isError)
     }
 
     private func stocked() -> FakeMusicStore {
@@ -176,11 +171,17 @@ struct MusicToolsTests {
         #expect(text.contains("played=0"))
     }
 
-    @Test("A search is bounded by the fixed scan ceiling")
-    func searchRespectsScanCeiling() async {
+    @Test("A search reads no further than the fixed scan ceiling, and a listing only its page")
+    func walksAreBounded() async {
         let store = stocked()
-        _ = await call(ToolCatalog.tracksName, store: store)
-        #expect(store.lastScanCeiling == Configuration.scanCeiling)
+        _ = await call(ToolCatalog.searchName, ["query": .string("Marea")], store: store)
+        #expect(store.lastWalk?.skip == 0)
+        #expect(store.lastWalk?.read == ToolCatalog.scanCeiling)
+        #expect(store.lastWalk?.deadline != nil)
+
+        _ = await call(ToolCatalog.tracksName, ["limit": .int(7), "offset": .int(3)], store: store)
+        #expect(store.lastWalk?.skip == 3)
+        #expect(store.lastWalk?.read == 7)
     }
 
     @Test("playlists_list reports every playlist")
@@ -191,23 +192,21 @@ struct MusicToolsTests {
         #expect(text.contains("Top Rated"))
     }
 
-    /// Covers bulk resolution (several ids in one call) and lyrics truncation together: a
-    /// caller who reads a lyric sheet must be told when it was cut short, or a truncated
+    /// Covers bulk resolution (several ids in one call) and the shortened lyrics together:
+    /// a caller who reads a lyric sheet must be told when it was cut short, or a shortened
     /// sheet reads as the whole song.
-    @Test("track_get resolves several ids and truncates lyrics past the configured limit")
+    @Test("track_get resolves several ids and says when it shortened their lyrics")
     func trackGetReturnsDetail() async {
         let store = stocked()
-        store.lyricsValue = String(repeating: "la la la ", count: 40)
-        var configuration = Configuration()
-        configuration.lyricsLimit = Configuration.lyricsLimitRange.lowerBound
+        store.lyricsValue = String(repeating: "la la la ", count: 100)
         let (text, isError) = await call(
             ToolCatalog.trackGetName,
             ["ids": .array([.string("T1"), .string("T3")])],
-            store: store, configuration: configuration)
+            store: store)
         #expect(!isError)
         #expect(text.contains("Marea Baja"))
         #expect(text.contains("Gaua"))
-        #expect(text.contains("truncated"))
+        #expect(text.hasPrefix("Lyrics is clipped to \(ToolCatalog.lyricsClipWidth) characters in each row."))
     }
 
     /// A track can be removed from the library between two calls, so an unresolved id is

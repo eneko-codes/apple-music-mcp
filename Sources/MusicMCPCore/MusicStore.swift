@@ -41,18 +41,16 @@ public protocol MusicStore: Sendable {
 
     func playerStatus() async throws -> PlayerStatus
 
-    /// `scanCeiling` bounds how many tracks one query may walk. It is passed per call
-    /// rather than held by the store so the value the tools enforce and the value
-    /// `music_status` reports cannot be two different numbers.
+    /// Walks the stretch of the candidates that `walk` names and returns the rows read
+    /// that match the filter's text, with how far the walk got and why it ended.
     ///
-    /// Paging is the caller's job: the store returns everything that matched within the
-    /// ceiling, because a library has no cursor and re-walking it per page would cost
-    /// more than shipping the rows once.
-    func tracks(matching filter: TrackFilter, scanCeiling: Int) async throws -> TrackPage
+    /// The bounds are passed per call, not held by the store, so the values the tools
+    /// enforce and the values they advertise cannot be two different numbers.
+    func tracks(matching filter: TrackFilter, walk: TrackWalk) async throws -> TrackPage
 
     /// nil when the library no longer holds that persistent id — an ordinary outcome
     /// rather than a failure, since a track can be removed between two calls.
-    func track(persistentID: String, lyricsLimit: Int) async throws -> TrackDetail?
+    func track(persistentID: String) async throws -> TrackDetail?
 
     func playlists() async throws -> [PlaylistInfo]
 

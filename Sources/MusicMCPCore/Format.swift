@@ -1,9 +1,11 @@
 import Foundation
 
-/// Plain-text rendering of every tool result.
+/// Plain-text rendering of every tool result. Pure: it is handed finished values and sends
+/// no Apple event.
 ///
-/// Two rules shape everything here. Dates are written in the same form the filters
-/// accept, so a date read out of a row can be pasted straight back into `added_from`.
+/// Three rules shape everything here. What a result does not hold is said first, in the
+/// wording of `Notice`, before any data. Dates are written in the same form the filters
+/// accept, so a date read out of a row can be pasted straight back into `from_date`.
 /// And a track row is `key=value` rather than a table, because twenty-six fields do not
 /// fit in columns and an unlabelled column is a field waiting to be misread.
 public struct Format: Sendable {
@@ -37,7 +39,7 @@ public struct Format: Sendable {
 
     /// `2026-08-09`, and `2026-08-09T11:20` when the time matters. Hand-rolled rather
     /// than `DateFormatter` so output does not change shape with the machine's locale,
-    /// and chosen to match what `added_from` and `added_to` parse.
+    /// and chosen to match what `from_date` and `to_date` parse.
     func stamp(_ date: Date, withTime: Bool = false) -> String {
         let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let day = String(
@@ -60,13 +62,80 @@ public struct Format: Sendable {
         return String(format: "%.1f MB", Double(bytes) / 1_048_576)
     }
 
+    /// Collapses a multi-line value onto one line, so the lines of a row stay the lines of
+    /// that row when a name or a comment holds a line break.
+    static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// `text` cut to `width` characters, with a mark where it was cut.
+    static func clip(_ text: String, to width: Int) -> String {
+        text.count > width ? String(text.prefix(width)) + "…" : text
+    }
+
+    static func plural(_ count: Int, _ noun: String) -> String {
+        "\(count) \(noun)\(count == 1 ? "" : "s")"
+    }
+
     /// The headline of a track: what a person would say out loud to name it.
     static func headline(_ row: TrackRow) -> String {
-        var text = row.name.isEmpty ? "(untitled)" : row.name
-        if !row.artist.isEmpty { text += " — \(row.artist)" }
-        if !row.album.isEmpty { text += " · \(row.album)" }
+        var text = row.name.isEmpty ? "(untitled)" : oneLine(row.name)
+        if !row.artist.isEmpty { text += " — \(oneLine(row.artist))" }
+        if !row.album.isEmpty { text += " · \(oneLine(row.album))" }
         if row.year > 0 { text += " (\(row.year))" }
         return text
+    }
+
+    // MARK: Notices and bounds
+
+    /// The comment as a row shows it. It is the one field of a row with no natural length,
+    /// so a row holds its first `ToolCatalog.commentClipWidth` characters and `track_get`
+    /// the whole.
+    static func rowComment(_ row: TrackRow) -> String {
+        clip(oneLine(row.comment), to: ToolCatalog.commentClipWidth)
+    }
+
+    /// The sentence that says comments were shortened, when one of `rows` had its comment
+    /// shortened and not otherwise.
+    static func commentNotice(_ rows: [TrackRow]) -> [String] {
+        guard rows.contains(where: { oneLine($0.comment).count > ToolCatalog.commentClipWidth })
+        else { return [] }
+        return [
+            Notice.clipped(
+                field: "Comment", width: ToolCatalog.commentClipWidth, tool: ToolCatalog.trackGetName)
+        ]
+    }
+
+    /// What an empty page says: nothing matched, or the offset skipped everything.
+    static func nothing(_ none: String, skipped offset: Int) -> String {
+        offset > 0 ? "(nothing at this offset)" : none
+    }
+
+    /// The sentences that place a page read at the source: `shown` rows starting at
+    /// `offset`, out of a walk that ended as `read` says.
+    ///
+    /// The total is the walk's own count when it reached the end, and otherwise the count
+    /// Music gave, or one the caller knows some other way (`expected`, a playlist's own
+    /// track count). Whether more rows exist is decided by how the walk ended, never by a
+    /// count: with no usable count the notice says that more exist and where they start.
+    static func position(
+        shown: Int, offset: Int, read: TrackPage, expected: Int? = nil, things: String
+    ) -> [String] {
+        var notices: [String] = []
+        if case .deadline = read.stop {
+            notices.append(Notice.partial(after: read.rows.count, things: things, narrowBy: "limit"))
+        }
+        let atEnd = read.stop == .end
+        // Nothing read and not at the end: the walk ran out of time before its first row,
+        // and the sentence above is all there is to say.
+        guard atEnd || shown > 0 else { return notices }
+        var total = read.total(after: offset, shown: shown)
+        if total == nil, let expected, expected > offset + shown { total = expected }
+        notices += [Notice.page(offset: offset, count: shown, total: total, things: things)].compactMap { $0 }
+        return notices
     }
 
     // MARK: Track rows
@@ -78,7 +147,7 @@ public struct Format: Sendable {
     /// enough already.
     func rowLines(_ row: TrackRow) -> [String] {
         var facts: [String] = ["id=\(row.persistentID)"]
-        if !row.genre.isEmpty { facts.append("genre=\(row.genre)") }
+        if !row.genre.isEmpty { facts.append("genre=\(Self.oneLine(row.genre))") }
         if row.duration > 0 { facts.append("length=\(Self.clock(row.duration))") }
         facts.append("played=\(row.playedCount)")
         if let played = row.playedDate { facts.append("last_played=\(stamp(played))") }
@@ -91,54 +160,36 @@ public struct Format: Sendable {
         var extra: [String] = []
         if let added = row.dateAdded { extra.append("added=\(stamp(added))") }
         if !row.albumArtist.isEmpty, row.albumArtist != row.artist {
-            extra.append("album_artist=\(row.albumArtist)")
+            extra.append("album_artist=\(Self.oneLine(row.albumArtist))")
         }
         if row.trackNumber > 0 { extra.append("track=\(row.trackNumber)") }
         if row.discNumber > 1 { extra.append("disc=\(row.discNumber)") }
-        if !row.composer.isEmpty { extra.append("composer=\(row.composer)") }
+        if !row.composer.isEmpty { extra.append("composer=\(Self.oneLine(row.composer))") }
         if row.bpm > 0 { extra.append("bpm=\(row.bpm)") }
         if row.compilation { extra.append("compilation") }
         if !row.kind.isEmpty { extra.append("kind=\(row.kind)") }
         let size = Self.megabytes(row.size)
         if !size.isEmpty { extra.append("size=\(size)") }
         if !row.cloudStatus.isEmpty { extra.append("cloud=\(row.cloudStatus)") }
-        if !row.comment.isEmpty { extra.append("comment=\(row.comment)") }
+        let comment = Self.rowComment(row)
+        if !comment.isEmpty { extra.append("comment=\(comment)") }
 
         var lines = ["   " + facts.joined(separator: " · ")]
         if !extra.isEmpty { lines.append("   " + extra.joined(separator: " · ")) }
         return lines
     }
 
+    /// Numbered from the row's place in the whole listing, so the number of the last row
+    /// on a page is the offset of the next one.
     func rows(_ rows: [TrackRow], startingAt offset: Int) -> [String] {
         rows.enumerated().flatMap { index, row in
             ["\(offset + index + 1). \(Self.headline(row))"] + rowLines(row)
         }
     }
 
-    /// The shared footer for anything paged: what was withheld, and how to ask for it.
-    func footer(shown: Int, total: Int, offset: Int, hitScanLimit: Bool) -> [String] {
-        var lines: [String] = []
-        let seen = offset + shown
-        if total > seen {
-            lines.append("")
-            lines.append("\(total - seen) more · call again with offset=\(seen)")
-        }
-        if hitScanLimit {
-            lines.append("")
-            lines.append(
-                """
-                The scan ceiling was reached before the library was exhausted, so tracks \
-                exist that this query never looked at. Narrow the filters and try again.
-                """)
-        }
-        return lines
-    }
-
     // MARK: Tools
 
-    public func status(
-        _ state: MusicAvailability, binaryPath: String, configuration: Configuration
-    ) -> String {
+    public func status(_ state: MusicAvailability, binaryPath: String, timeout: Duration) -> String {
         let headline: String
         switch state {
         case .ready: headline = "Music: RUNNING, automation permitted."
@@ -149,15 +200,22 @@ public struct Format: Sendable {
         }
 
         var text = headline + "\n\n"
-        // The effective configuration: a setting that never reached the process is
-        // otherwise invisible, and has to be inferred from odd behaviour.
+        // The bounds in force: a limit that is only in the code is otherwise invisible,
+        // and has to be inferred from odd behaviour.
         text += Self.block([
             ("binary", binaryPath),
             ("target", ScriptingBridgeMusicStore.bundleIdentifier),
             ("process", "pid \(ProcessInfo.processInfo.processIdentifier)"),
-            ("scan ceiling", "\(Configuration.scanCeiling) tracks per query"),
-            ("default rows", "\(Configuration.searchLimit)"),
-            ("lyrics limit", "\(configuration.lyricsLimit) characters"),
+            ("search scan", "\(ToolCatalog.scanCeiling) tracks per music_search call"),
+            (
+                "track rows",
+                "\(ToolCatalog.defaultTrackLimit) to a page, \(ToolCatalog.trackLimitRange.upperBound) at most"
+            ),
+            (
+                "playlists",
+                "\(ToolCatalog.defaultPlaylistLimit) to a page, \(ToolCatalog.playlistLimitRange.upperBound) at most"
+            ),
+            ("time limit", "\(timeout.components.seconds) seconds per call"),
         ])
         if state != .ready {
             text += "\n\n" + ToolError.availabilityMessage(state)
@@ -183,65 +241,112 @@ public struct Format: Sendable {
                         : Self.clock(status.position)
                 ),
                 ("volume", "\(status.volume)"),
-                ("playlist", status.playlistName),
+                ("playlist", Self.oneLine(status.playlistName)),
             ]))
         lines.append("")
         lines.append(contentsOf: rowLines(track))
-        return lines.joined(separator: "\n")
+        return ToolStandard.withNotices(Self.commentNotice([track]), lines.joined(separator: "\n"))
     }
 
-    public func trackResults(
-        _ results: [TrackRow], total: Int, offset: Int, hitScanLimit: Bool, describing scope: String
+    /// One page of `tracks_list`, read at the source. `tracks` is the page to show, which
+    /// can be shorter than what `read` holds when the rows were too wide to fit.
+    public func trackListing(
+        _ tracks: [TrackRow], offset: Int, read: TrackPage, scope: String, order: String,
+        notices: [String]
     ) -> String {
-        guard !results.isEmpty else {
-            var text = "No tracks match \(scope)."
-            if hitScanLimit {
-                text += "\n\nThe scan ceiling was reached first, so the library was not "
-                text += "exhausted. Narrow the filters and try again."
+        let notices =
+            notices + Self.position(shown: tracks.count, offset: offset, read: read, things: "tracks")
+            + Self.commentNotice(tracks)
+        var text: String
+        if let total = read.total(after: offset, shown: tracks.count) {
+            guard total > 0 else {
+                return ToolStandard.withNotices(notices, "No tracks match \(scope).")
             }
-            return text
+            text = "\(Self.plural(total, "track")) \(total == 1 ? "matches" : "match") \(scope), in \(order)."
+        } else {
+            text = "Tracks matching \(scope), in \(order)."
         }
-        var lines = ["\(total) match \(scope)."]
-        lines.append("")
-        lines.append(contentsOf: rows(results, startingAt: offset))
-        lines.append(
-            contentsOf: footer(
-                shown: results.count, total: total, offset: offset, hitScanLimit: hitScanLimit))
-        return lines.joined(separator: "\n")
+        text += "\n\n"
+        text += tracks.isEmpty
+            ? "  " + Self.nothing("(none read)", skipped: offset)
+            : rows(tracks, startingAt: offset).joined(separator: "\n")
+        return ToolStandard.withNotices(notices, text)
     }
 
-    public func groups(
-        _ groups: [LibraryGroup], kind: String, scope: String, hitScanLimit: Bool
+    /// One page of the tracks a search found. `tracks` is the page; `matching` counts every
+    /// match among the `read.scanned` tracks the scan read. The caller supplies the notices,
+    /// the page's position among them.
+    public func searchTracks(
+        _ tracks: [TrackRow], offset: Int, matching: Int, read: TrackPage, scope: String,
+        order: String
     ) -> String {
-        guard !groups.isEmpty else { return "No \(kind) match \(scope)." }
-        let width = groups.map(\.name.count).max() ?? 0
-        var lines = ["\(groups.count) \(kind) match \(scope), grouped from the scanned rows."]
+        guard matching > 0 else { return "No tracks match \(scope)\(Self.scanned(read))." }
+        var text = "\(Self.plural(matching, "track")) \(matching == 1 ? "matches" : "match") \(scope)"
+        text += "\(Self.scanned(read)), in \(order).\n\n"
+        text += tracks.isEmpty
+            ? "  " + Self.nothing("(none)", skipped: offset)
+            : rows(tracks, startingAt: offset).joined(separator: "\n")
+        return text
+    }
+
+    /// Qualifies a count when the scan did not reach the end of the candidates, so that
+    /// "3 tracks match" is never read as "3 tracks in the library match".
+    static func scanned(_ read: TrackPage) -> String {
+        if case .end = read.stop { return "" }
+        let all = read.total(after: 0, shown: read.scanned).map { " of \($0)" } ?? ""
+        return " among the \(Self.plural(read.scanned, "track")) scanned\(all)"
+    }
+
+    /// One page of the albums or artists a search found. `groups` is the page; `matching`
+    /// counts every group.
+    public func groups(
+        _ groups: [LibraryGroup], offset: Int, matching: Int, kind: String, read: TrackPage,
+        scope: String
+    ) -> String {
+        guard matching > 0 else { return "No \(kind) match \(scope)\(Self.scanned(read))." }
+        var lines = [
+            "\(matching) \(matching == 1 ? String(kind.dropLast()) + " matches" : kind + " match") "
+                + "\(scope)\(Self.scanned(read)), ordered by matching tracks (most first), then name."
+        ]
         lines.append("")
+        if groups.isEmpty {
+            lines.append("  " + Self.nothing("(none)", skipped: offset))
+        }
+        let width = groups.map { Self.oneLine($0.name).count }.max() ?? 0
         for group in groups {
-            var line = "  " + Self.pad(group.name, to: width)
-            if !group.detail.isEmpty { line += "  — \(group.detail)" }
-            line += "  · \(group.trackCount) track\(group.trackCount == 1 ? "" : "s")"
+            var line = "  " + Self.pad(Self.oneLine(group.name), to: width)
+            if !group.detail.isEmpty { line += "  — \(Self.oneLine(group.detail))" }
+            line += "  · \(Self.plural(group.trackCount, "track"))"
             lines.append(line)
         }
         lines.append("")
         lines.append(
-            "Counts are of tracks this query scanned, not of the whole library. Use "
-                + "tracks_list for the rows behind them.")
-        if hitScanLimit {
-            lines.append("")
-            lines.append(
-                "The scan ceiling was reached, so a name absent here may still exist.")
-        }
+            "Counts are of the tracks this search read and matched, not of the whole library. "
+                + "Search with type tracks for the rows behind them.")
         return lines.joined(separator: "\n")
     }
 
-    public func playlistList(_ playlists: [PlaylistInfo]) -> String {
-        guard !playlists.isEmpty else { return "No playlists." }
-        let width = playlists.map(\.name.count).max() ?? 0
-        var lines: [String] = []
+    /// One page of playlists. `playlists` is the page; `matching` counts every playlist the
+    /// listing or the search holds. `scope` is the query of a search, or nil for the list.
+    public func playlistList(
+        _ playlists: [PlaylistInfo], offset: Int, matching: Int, scope: String? = nil
+    ) -> String {
+        guard matching > 0 else {
+            return scope.map { "No playlists match \($0)." } ?? "No playlists."
+        }
+        var lines = [
+            Self.plural(matching, "playlist")
+                + (scope.map { " \(matching == 1 ? "matches" : "match") \($0)" } ?? "")
+                + ", in Music's own order."
+        ]
+        lines.append("")
+        if playlists.isEmpty {
+            lines.append("  " + Self.nothing("(none)", skipped: offset))
+        }
+        let width = playlists.map { Self.oneLine($0.name).count }.max() ?? 0
         for playlist in playlists {
-            var line = "  " + Self.pad(playlist.name, to: width)
-            line += "  \(playlist.trackCount) track\(playlist.trackCount == 1 ? "" : "s")"
+            var line = "  " + Self.pad(Self.oneLine(playlist.name), to: width)
+            line += "  \(Self.plural(playlist.trackCount, "track"))"
             if playlist.duration > 0 { line += " · \(Self.clock(Double(playlist.duration)))" }
             line += " · \(describe(playlist))"
             line += " · id=\(playlist.persistentID)"
@@ -261,10 +366,20 @@ public struct Format: Sendable {
         return "accepts tracks"
     }
 
+    /// A playlist's details and one page of its tracks, read at the source. `tracks` is the
+    /// page to show, which can be shorter than what `read` holds when the rows were too
+    /// wide to fit.
     public func playlistDetail(
-        _ playlist: PlaylistInfo, tracks: [TrackRow], total: Int, offset: Int
+        _ playlist: PlaylistInfo, tracks: [TrackRow], offset: Int, read: TrackPage,
+        notices: [String]
     ) -> String {
-        var lines = [playlist.name]
+        let notices =
+            notices
+            + Self.position(
+                shown: tracks.count, offset: offset, read: read, expected: playlist.trackCount,
+                things: "tracks")
+            + Self.commentNotice(tracks)
+        var lines = [Self.oneLine(playlist.name)]
         lines.append("")
         lines.append(
             Self.block([
@@ -284,85 +399,122 @@ public struct Format: Sendable {
             ]))
         lines.append("")
         if tracks.isEmpty {
-            lines.append(offset > 0 ? "No tracks at offset \(offset)." : "The playlist is empty.")
+            lines.append(Self.nothing("The playlist is empty.", skipped: offset))
         } else {
+            lines.append("Tracks, in playlist order:")
             lines.append(contentsOf: rows(tracks, startingAt: offset))
-            lines.append(
-                contentsOf: footer(
-                    shown: tracks.count, total: total, offset: offset, hitScanLimit: false))
         }
-        return lines.joined(separator: "\n")
+        return ToolStandard.withNotices(notices, lines.joined(separator: "\n"))
     }
 
-    public func trackDetails(_ details: [TrackDetail], missing: [String]) -> String {
-        var lines: [String] = []
-        for detail in details {
-            let row = detail.row
-            lines.append(Self.headline(row))
-            lines.append("")
-            lines.append(
-                Self.block([
-                    ("id", row.persistentID),
-                    ("artist", row.artist),
-                    ("album artist", row.albumArtist),
-                    ("album", row.album),
-                    ("composer", row.composer),
-                    ("genre", row.genre),
-                    ("year", row.year > 0 ? "\(row.year)" : nil),
-                    ("length", row.duration > 0 ? Self.clock(row.duration) : nil),
-                    ("bpm", row.bpm > 0 ? "\(row.bpm)" : nil),
-                    (
-                        "track",
-                        row.trackNumber > 0
-                            ? "\(row.trackNumber)\(row.discNumber > 1 ? " (disc \(row.discNumber))" : "")"
-                            : nil
-                    ),
-                    (
-                        "played",
-                        "\(row.playedCount)"
-                            + (row.playedDate.map { ", last \(stamp($0, withTime: true))" } ?? "")
-                    ),
-                    (
-                        "skipped",
-                        "\(row.skippedCount)"
-                            + (row.skippedDate.map { ", last \(stamp($0, withTime: true))" } ?? "")
-                    ),
-                    ("rating", "\(row.rating) of 100"),
-                    ("favourite", row.favorited ? "yes" : nil),
-                    ("disliked", row.disliked ? "yes" : nil),
-                    ("compilation", row.compilation ? "yes" : nil),
-                    ("added", row.dateAdded.map { stamp($0, withTime: true) }),
-                    ("kind", row.kind),
-                    ("size", Self.megabytes(row.size)),
-                    ("cloud", row.cloudStatus),
-                    ("sort name", row.sortName == row.name ? nil : row.sortName),
-                    ("comment", row.comment),
-                ]))
-            lines.append("")
-            if detail.lyrics.isEmpty {
-                lines.append("  lyrics   (none stored)")
-            } else {
-                lines.append("  lyrics")
-                lines.append(
-                    detail.lyrics.split(separator: "\n", omittingEmptySubsequences: false)
-                        .map { "    \($0)" }.joined(separator: "\n"))
-                if detail.lyricsTruncated {
-                    lines.append("    … truncated at the configured lyrics limit.")
-                }
-            }
-            lines.append("")
+    /// Everything about one track but its lyrics, as a labelled block.
+    func trackFields(_ row: TrackRow, comment: String) -> String {
+        Self.block([
+            ("id", row.persistentID),
+            ("artist", row.artist),
+            ("album artist", row.albumArtist),
+            ("album", row.album),
+            ("composer", row.composer),
+            ("genre", row.genre),
+            ("year", row.year > 0 ? "\(row.year)" : nil),
+            ("length", row.duration > 0 ? Self.clock(row.duration) : nil),
+            ("bpm", row.bpm > 0 ? "\(row.bpm)" : nil),
+            (
+                "track",
+                row.trackNumber > 0
+                    ? "\(row.trackNumber)\(row.discNumber > 1 ? " (disc \(row.discNumber))" : "")"
+                    : nil
+            ),
+            (
+                "played",
+                "\(row.playedCount)"
+                    + (row.playedDate.map { ", last \(stamp($0, withTime: true))" } ?? "")
+            ),
+            (
+                "skipped",
+                "\(row.skippedCount)"
+                    + (row.skippedDate.map { ", last \(stamp($0, withTime: true))" } ?? "")
+            ),
+            ("rating", "\(row.rating) of 100"),
+            ("favourite", row.favorited ? "yes" : nil),
+            ("disliked", row.disliked ? "yes" : nil),
+            ("compilation", row.compilation ? "yes" : nil),
+            ("added", row.dateAdded.map { stamp($0, withTime: true) }),
+            ("kind", row.kind),
+            ("size", Self.megabytes(row.size)),
+            ("cloud", row.cloudStatus),
+            ("sort name", row.sortName == row.name ? nil : row.sortName),
+            ("comment", comment),
+        ])
+    }
+
+    static func lyricsLines(_ lyrics: String) -> String {
+        guard !lyrics.isEmpty else { return "  lyrics   (none stored)" }
+        return "  lyrics\n"
+            + lyrics.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map { "    \($0)" }.joined(separator: "\n")
+    }
+
+    /// The whole record of one track, comment and lyrics uncut. It is the text `track_get`
+    /// windows when it is asked for a single id, so its length is the caller's to page.
+    public func trackRecord(_ detail: TrackDetail) -> String {
+        [
+            Self.headline(detail.row), "", trackFields(detail.row, comment: detail.row.comment), "",
+            Self.lyricsLines(detail.lyrics),
+        ].joined(separator: "\n")
+    }
+
+    /// Several tracks in one result: each record whole except its lyrics, cut to
+    /// `lyricsWidth` characters, and its comment, cut as a row cuts it. Several long texts
+    /// are never returned whole; one id reads one in full.
+    ///
+    /// `heldIDs` are the tracks that were found and are not in `details`, because their
+    /// records, even shortened, were too long to fit one result together.
+    public func trackRecords(
+        _ details: [TrackDetail], heldIDs: [String], missing: [String], lyricsWidth: Int,
+        notices: [String]
+    ) -> String {
+        var notices = notices
+        let single = "\(ToolCatalog.trackGetName) and a single id"
+        if !heldIDs.isEmpty {
+            // Named, so the caller can ask for exactly these. The list is at most the
+            // number of ids a call takes, each echoed at a fixed width.
+            let named = heldIDs.map(ToolStandard.echo).joined(separator: ", ")
+            notices.append(
+                Notice.notShown(
+                    count: heldIDs.count, things: "track(s) asked for",
+                    pass: "these ids in another call (\(named))"))
         }
+        if details.contains(where: { $0.lyrics.count > lyricsWidth }) {
+            notices.append(Notice.clipped(field: "Lyrics", width: lyricsWidth, tool: single))
+        }
+        if details.contains(where: { $0.row.comment.count > ToolCatalog.commentClipWidth }) {
+            notices.append(
+                Notice.clipped(field: "Comment", width: ToolCatalog.commentClipWidth, tool: single))
+        }
+        var blocks: [String] = []
+        // First, like a notice: these are tracks that were asked for and are not below.
         if !missing.isEmpty {
-            lines.append(
-                "Not found: \(missing.joined(separator: ", ")) — run music_search again, "
-                    + "a persistent id does not survive the track leaving the library.")
+            blocks.append(
+                "Not found: \(missing.map(ToolStandard.echo).joined(separator: ", ")) — run "
+                    + "music_search again, a persistent id does not survive the track leaving "
+                    + "the library.")
         }
-        return lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+        for detail in details {
+            blocks.append(
+                [
+                    Self.headline(detail.row), "",
+                    trackFields(
+                        detail.row, comment: Self.clip(detail.row.comment, to: ToolCatalog.commentClipWidth)),
+                    "", Self.lyricsLines(Self.clip(detail.lyrics, to: lyricsWidth)),
+                ].joined(separator: "\n"))
+        }
+        return ToolStandard.withNotices(notices, blocks.joined(separator: "\n\n"))
     }
 
     public func createdPlaylist(_ playlist: PlaylistInfo) -> String {
         """
-        Created the playlist "\(playlist.name)". It is empty.
+        Created the playlist "\(Self.oneLine(playlist.name))". It is empty.
 
         \(Self.block([("id", playlist.persistentID)]))
 
@@ -370,44 +522,47 @@ public struct Format: Sendable {
         """
     }
 
+    /// One id a line. Each is the caller's own text, so it is repeated only as an error
+    /// would repeat it.
+    static func idList(_ ids: [String]) -> String {
+        ids.map { "  " + ToolStandard.echo($0) }.joined(separator: "\n")
+    }
+
     /// `skipDuplicatesRequested` is passed separately rather than inferred from a
     /// non-empty `duplicates`, because the two silences mean different things: with the
     /// guard off nothing was ever checked, and reporting that as "no duplicates" would be
     /// a claim this server never verified.
+    ///
+    /// Both lists are bounded by `ToolCatalog.addedTracksRange`, the most ids one call
+    /// takes, so they are given whole: which ids did not go in is the point of the answer.
     public func added(_ outcome: AddOutcome, skipDuplicatesRequested: Bool) -> String {
         var text =
-            "Added \(outcome.added) track\(outcome.added == 1 ? "" : "s") "
-            + "to \"\(outcome.playlistName)\". Nothing already in it was changed."
+            "Added \(Self.plural(outcome.added, "track")) "
+            + "to \"\(Self.oneLine(outcome.playlistName))\". Nothing already in it was changed."
         if skipDuplicatesRequested {
             if outcome.duplicates.isEmpty {
                 text += " None of the ids given were already in the playlist."
             } else {
-                text += """
-
-
-                    \(outcome.duplicates.count) id\(outcome.duplicates.count == 1 ? "" : "s") \
-                    \(outcome.duplicates.count == 1 ? "was" : "were") already in the playlist \
-                    and \(outcome.duplicates.count == 1 ? "was" : "were") not added again:
-                      \(outcome.duplicates.joined(separator: "\n  "))
-                    """
+                let one = outcome.duplicates.count == 1
+                text += "\n\n\(Self.plural(outcome.duplicates.count, "id")) \(one ? "was" : "were") "
+                text += "already in the playlist and \(one ? "was" : "were") not added again:\n"
+                text += Self.idList(outcome.duplicates)
             }
         }
         if !outcome.missing.isEmpty {
-            text += """
-
-
-                \(outcome.missing.count) id\(outcome.missing.count == 1 ? "" : "s") did not \
-                resolve and \(outcome.missing.count == 1 ? "was" : "were") skipped:
-                  \(outcome.missing.joined(separator: "\n  "))
-
-                A persistent id stops resolving once the track leaves the library. Look \
-                them up again with music_search.
-                """
+            let one = outcome.missing.count == 1
+            text += "\n\n\(Self.plural(outcome.missing.count, "id")) did not resolve and "
+            text += "\(one ? "was" : "were") skipped:\n"
+            text += Self.idList(outcome.missing)
+            text += "\n\nA persistent id stops resolving once the track leaves the library. Look "
+            text += "them up again with music_search."
         }
         return text
     }
 
-    public func controlled(_ command: PlaybackCommand, status: PlayerStatus) -> String {
+    public func controlled(
+        _ command: PlaybackCommand, status: PlayerStatus, notices: [String]
+    ) -> String {
         let action: String
         switch command {
         case .play: action = "Playback started."
@@ -424,6 +579,6 @@ public struct Format: Sendable {
             text += "Player state: \(status.state.rawValue). Nothing is loaded."
         }
         text += "\n\n" + Self.block([("volume", "\(status.volume)")])
-        return text
+        return ToolStandard.withNotices(notices, text)
     }
 }
