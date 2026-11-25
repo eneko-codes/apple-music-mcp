@@ -1,5 +1,4 @@
 import Foundation
-import MCP
 
 /// An album or an artist, counted off the rows a query scanned.
 ///
@@ -18,7 +17,7 @@ public struct LibraryGroup: Sendable, Equatable {
 /// Never sends an Apple event itself — everything goes through `MusicStore`, which is
 /// what lets the tests drive every branch below with Music closed and the owner's library
 /// untouched.
-public struct MusicTools: Sendable {
+public struct MusicTools: ToolHandler {
     private let store: any MusicStore
     private let calendar: Calendar
     private let configuration: Configuration
@@ -34,27 +33,21 @@ public struct MusicTools: Sendable {
         self.format = Format(calendar: calendar)
     }
 
-    public func handle(_ parameters: CallTool.Parameters) async -> CallTool.Result {
+    public func handle(_ parameters: ToolCall) async -> ToolOutput {
         let started = ContinuousClock.now
         do {
-            let text = try await run(parameters)
-            return .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: false)
+            return ToolOutput(text: try await run(parameters), isError: false)
         } catch let error as ToolError {
             Diagnostics.toolFailed(parameters.name, error: error, since: started)
-            return .init(
-                content: [.text(text: error.message, annotations: nil, _meta: nil)], isError: true)
+            return ToolOutput(text: error.message, isError: true)
         } catch {
             Diagnostics.toolFailed(parameters.name, error: error, since: started)
-            return .init(
-                content: [
-                    .text(
-                        text: ToolError.storeFailure(error.localizedDescription).message,
-                        annotations: nil, _meta: nil)
-                ], isError: true)
+            return ToolOutput(
+                text: ToolError.storeFailure(error.localizedDescription).message, isError: true)
         }
     }
 
-    private func run(_ parameters: CallTool.Parameters) async throws -> String {
+    private func run(_ parameters: ToolCall) async throws -> String {
         let arguments = Arguments(parameters.arguments, calendar: calendar)
 
         // Reports availability instead of failing on it: this is the tool you reach for
