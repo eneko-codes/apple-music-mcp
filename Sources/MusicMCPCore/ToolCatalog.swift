@@ -327,7 +327,7 @@ public enum ToolCatalog {
             Call this before add_to_playlist: smart, Genius, folder and library playlists \
             are maintained by Music itself and will refuse tracks. Call it before \
             create_playlist too, to see whether the name is already taken; music_search \
-            with type playlists finds one by name without paging.
+            with type playlists returns only those whose name matches.
             """,
         inputSchema: object(properties: [
             "limit": limit("playlists", range: playlistLimitRange, default: defaultPlaylistLimit),
